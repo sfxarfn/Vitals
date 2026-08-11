@@ -5,6 +5,8 @@ enum NotchMode: Equatable {
     case event(Event)
     case accessory(Accessory)
     case audioLost
+    /// Plain hover: the notch acknowledges the pointer and nothing more.
+    case peek
     case expanded
 }
 
@@ -22,9 +24,15 @@ struct NotchMetrics {
     func size(for mode: NotchMode) -> CGSize {
         switch mode {
         case .idle:      notch
-        case .event:     CGSize(width: pillWidth, height: notch.height)
+        case .event(let event):
+            event.signal.isCompact
+                ? CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
+                : CGSize(width: pillWidth, height: notch.height)
         case .accessory,
              .audioLost: CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
+        // Same flare as the accessory pill, twice as tall — enough to read as
+        // "it noticed you" without claiming the screen the way the panel does.
+        case .peek:      CGSize(width: notch.width + accessoryFlank * 2, height: notch.height * 2)
         case .expanded:  CGSize(width: panelWidth, height: notch.height + panelBodyHeight)
         }
     }
@@ -94,6 +102,10 @@ private struct AudioLostPill: View {
 struct NotchView: View {
     let mode: NotchMode
     let metrics: NotchMetrics
+    let telemetry: Telemetry
+    /// One per notch edge. Nil is no glow on that side.
+    let cpuGlow: Signal?
+    let thermalGlow: Signal?
     let shelf: Shelf
     /// Sends via AirDrop, anchored on the panel's own NSView for the fallback
     /// share sheet — the controller owns the window, so it owns that call.
@@ -102,6 +114,8 @@ struct NotchView: View {
     @State private var shelfTargeted = false
     @State private var airDropTargeted = false
     @State private var settingsHovered = false
+    @State private var showBattery = false
+    @State private var batteryHovered = false
 
     private var size: CGSize { metrics.size(for: mode) }
     private var lifted: Bool { mode != .idle }
@@ -141,16 +155,50 @@ struct NotchView: View {
                         radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
                 .shadow(color: .black.opacity(lifted ? 0.35 : 0),
                         radius: lifted ? 24 : 0, y: lifted ? 12 : 0)
+                // Behind the black shape and outside its clip, so only the half
+                // that escapes past each edge is ever seen — that overlap is
+                // what reads as light leaking out rather than a colored border.
+                .background {
+                    ZStack {
+                        glowBar(thermalGlow).offset(x: -glowInset)
+                        glowBar(cpuGlow).offset(x: glowInset)
+                    }
+                }
+                // States that last twenty minutes must not announce themselves;
+                // fading is the whole difference between a glow and a pill.
+                .animation(.easeInOut(duration: 0.5), value: [thermalGlow, cpuGlow])
             Spacer(minLength: 0)
         }
         .frame(width: metrics.windowSize.width, height: metrics.windowSize.height, alignment: .top)
         .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: mode)
+        // The shelf is what expanded is for; a battery panel left up from the
+        // last hover would greet the next drag with the wrong row.
+        .onChange(of: mode) { if mode == .idle { showBattery = false } }
     }
 
     @ViewBuilder private var content: some View {
         switch mode {
         case .idle:
             EmptyView()
+        case .peek:
+            // Two rows: the camera housing row carrying a stat in each flank,
+            // and the gear centred below. Peek is exactly the accessory pill's
+            // width, so the flanks divide the same way the pills' do.
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    readout("thermometer.medium", tempValue, tint: tempTint)
+                        .frame(width: metrics.accessoryFlank)
+                    Spacer(minLength: 0).frame(width: metrics.notch.width)
+                    readout("cpu", "\(Int(telemetry.stall.cpuPercent.rounded()))%", tint: .white)
+                        .frame(width: metrics.accessoryFlank)
+                }
+                .frame(height: metrics.notch.height)
+                settingsButton(size: 17).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(height: size.height)
+            .transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+        case .event(let event) where event.signal.isCompact:
+            compactPill(event).transition(.opacity)
         case .event(let event):
             // Anything behind the camera housing is invisible, so the pill puts
             // its glyph and label in the two flanks and leaves the middle empty.
@@ -187,13 +235,22 @@ struct NotchView: View {
                 // Camera housing row — anything under it is invisible, so the
                 // gear sits in the right flank beside it.
                 Color.clear.frame(height: metrics.notch.height)
-                    .overlay(alignment: .trailing) { settingsButton }
-                HStack(spacing: 12) {
-                    airDropTile
-                    shelfBox
+                    .overlay(alignment: .trailing) { settingsButton().padding(.trailing, 14) }
+                // One slot, two contents — the badge swaps what is in the row,
+                // never the panel's geometry.
+                Group {
+                    if showBattery {
+                        batteryPanel
+                    } else {
+                        HStack(spacing: 12) {
+                            airDropTile
+                            shelfBox
+                        }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
+                .animation(.snappy(duration: 0.2), value: showBattery)
             }
             // Content fades in behind the shape rather than appearing at full
             // opacity the instant the geometry starts moving.
@@ -202,6 +259,102 @@ struct NotchView: View {
     }
 
     private var flank: CGFloat { (metrics.pillWidth - metrics.notch.width) / 2 }
+
+    /// Same two-flank shape as the accessory pill: tinted glyph on the left, a
+    /// live number on the right, camera housing in between.
+    private func compactPill(_ event: Event) -> some View {
+        HStack(spacing: 0) {
+            Image(systemName: event.symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(event.tint)
+                .frame(width: metrics.accessoryFlank)
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            Text(compactValue(event))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(.white)
+                .frame(width: metrics.accessoryFlank)
+        }
+        .frame(height: metrics.notch.height)
+    }
+
+    /// Falls back to the word when the sensor tree gave us nothing — a thermal
+    /// pill with an empty flank would look broken rather than quiet.
+    private func compactValue(_ event: Event) -> String {
+        switch event.signal {
+        case .thermalSerious:
+            telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? event.title
+        default:
+            "\(telemetry.power.percent)%"
+        }
+    }
+
+    // MARK: Glow
+
+    /// Where each bar's centre sits — *inside* the straight edge, so the black
+    /// shape covers the bar itself and only the blur's tail clears the flare.
+    /// A source you can see is a smudge sitting next to the notch; a source you
+    /// can't is light coming from behind it.
+    ///
+    /// Calibration knob, and it moves against `glowBlur`: further in or a
+    /// tighter blur and nothing escapes at all, further out and the bright core
+    /// crosses the edge and detaches again.
+    private var glowInset: CGFloat { size.width / 2 - 6 }
+    private let glowBlur: CGFloat = 20
+
+    private func glowBar(_ signal: Signal?) -> some View {
+        Capsule()
+            .fill(signal?.tint ?? .clear)
+            // Exactly the shape's height, never more: the blur already carries
+            // the spill past the bottom corner, whereas an overhanging bar puts
+            // its unmasked core down there and the blob comes back.
+            .frame(width: 26, height: size.height)
+            .blur(radius: glowBlur)
+    }
+
+    /// Glyph plus one short value. Same 17/12 pair the compact pill uses, so a
+    /// stat reads at the same weight whether you hovered for it or it came to
+    /// you — the glyph is the only thing that says which stat this is.
+    private func readout(_ symbol: String, _ value: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(tint)
+                // SF Symbols do not share a bounding box — `cpu` is near-square
+                // and `thermometer.medium` narrow and tall — so at one point
+                // size the two flanks take different room and their values stop
+                // lining up. A fixed box is what makes the pair symmetric.
+                .frame(width: 20)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(.white)
+        }
+    }
+
+    /// Throttling state, not the thermometer. A die at 78° is fine on one
+    /// machine and clamped on another, so a degree threshold could only ever
+    /// approximate what `thermalState` reports outright — green is nothing cut,
+    /// orange is the governor starting to clamp, red is it clamping hard. The
+    /// number beside the glyph stays the raw reading.
+    private var tempTint: Color {
+        guard telemetry.stall.tempC != nil else { return .white.opacity(0.4) }
+        switch telemetry.stall.thermal {
+        case .serious:  return .orange
+        case .critical: return .red
+        // `fair` is fans spinning up, which costs no performance and is not
+        // news — it stays green alongside `nominal`.
+        default:        return .green
+        }
+    }
+
+    /// A machine whose sensor tree we cannot read gets a dash, not a zero — 0°
+    /// is a plausible-looking temperature and reads as a working sensor.
+    private var tempValue: String {
+        telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? "—"
+    }
 
     /// A device that never reported a level gets the Bluetooth mark instead —
     /// an empty ring would read as a flat battery.
@@ -223,16 +376,108 @@ struct NotchView: View {
         }
     }
 
-    private var settingsButton: some View {
-        SettingsLink {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(settingsHovered ? 0.9 : 0.45))
+    private func settingsButton(size: CGFloat = 12) -> some View {
+        HStack(spacing: size * 0.4) {
+            // Charge reads off how full the glyph is, not a number — the pill
+            // already carries the percentage when it is worth interrupting for.
+            // Pressing it swaps the expanded row over to the numbers.
+            Button { showBattery.toggle() } label: {
+                Image(systemName: telemetry.power.isCharging
+                      ? "battery.100percent.bolt"
+                      : "battery.\(batteryStep)percent")
+                    .font(.system(size: size, weight: .medium))
+                    .foregroundStyle(.white.opacity(showBattery || batteryHovered ? 0.9 : 0.45))
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { batteryHovered = $0 }
+            .animation(.snappy(duration: 0.15), value: batteryHovered)
+            SettingsLink {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: size, weight: .medium))
+                    .foregroundStyle(.white.opacity(settingsHovered ? 0.9 : 0.45))
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { settingsHovered = $0 }
+            .animation(.snappy(duration: 0.15), value: settingsHovered)
         }
-        .buttonStyle(.plain)
-        .padding(.trailing, 14)
-        .onHover { settingsHovered = $0 }
-        .animation(.snappy(duration: 0.15), value: settingsHovered)
+    }
+
+    /// SF Symbols only ships five fill levels, so the reading snaps to the
+    /// nearest one rather than rounding down — 60% on a `50percent` glyph reads
+    /// emptier than the battery is.
+    private var batteryStep: Int {
+        switch telemetry.power.percent {
+        case ..<13:  0
+        case ..<38:  25
+        case ..<63:  50
+        case ..<88:  75
+        default:     100
+        }
+    }
+
+    // MARK: Battery panel
+
+    /// Takes the shelf row's slot, and its 104pt tile width, so the swap reads
+    /// as the row changing its mind rather than the panel resizing.
+    private var batteryPanel: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text("\(telemetry.power.percent)%")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                Text(chargeState)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(width: 104).frame(maxHeight: .infinity)
+            .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
+
+            VStack(spacing: 5) {
+                statLine("Battery", String(format: "%+.1f W", telemetry.power.batteryWatts))
+                statLine("System", telemetry.power.systemWatts.map { String(format: "%.1f W", $0) } ?? "—")
+                statLine("Adapter", adapterValue)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 12)
+            .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
+        }
+    }
+
+    private func statLine(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(.white.opacity(0.45))
+            Spacer(minLength: 0)
+            Text(value).monospacedDigit().foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+    }
+
+    /// `isCharging` reads false through adapter negotiation and at a hold near
+    /// full, so it cannot be the only thing that decides the wording — on AC
+    /// with no estimate the honest line is that it is plugged in.
+    private var chargeState: String {
+        let p = telemetry.power
+        if let m = p.minutesToFull, p.isCharging { return "\(duration(m)) to full" }
+        if p.onAC { return p.isCharging ? "Charging" : (p.percent >= 95 ? "Charged" : "Plugged in") }
+        return p.minutesToEmpty.map { "\(duration($0)) left" } ?? "On battery"
+    }
+
+    /// The estimate is nil until macOS has watched the draw settle, which is why
+    /// every caller here treats it as optional rather than showing a 0:00.
+    private func duration(_ minutes: Int) -> String {
+        minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+
+    private var adapterValue: String {
+        let p = telemetry.power
+        guard p.onAC else { return "—" }
+        if let w = p.adapterWatts { return "\(Int(w.rounded()))W" }
+        return p.adapterName ?? "AC"
     }
 
     // MARK: Shelf

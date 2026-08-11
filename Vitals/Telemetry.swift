@@ -28,6 +28,76 @@ struct StallSample {
     var swapUsedMB: Double = 0
     var thermal: ProcessInfo.ThermalState = .nominal
     var cpuPercent: Double = 0
+    /// Hottest die sensor, °C. Nil on a machine whose sensor tree we cannot read.
+    var tempC: Double?
+}
+
+// MARK: - Die temperature
+
+/// There is no public API for it. `ProcessInfo.thermalState` is four words, and
+/// on Apple Silicon the SMC keys everyone quotes from the Intel era are gone —
+/// every sensor is published through the private IOHIDEventSystem tree instead.
+/// Those symbols live in the IOKit binary this app already links, they just ship
+/// no headers, so they are looked up at runtime rather than imported.
+private final class TemperatureSensors {
+    private typealias Create = @convention(c) (CFAllocator?) -> Unmanaged<AnyObject>?
+    private typealias SetMatching = @convention(c) (AnyObject, CFDictionary) -> Void
+    private typealias CopyServices = @convention(c) (AnyObject) -> Unmanaged<CFArray>?
+    private typealias CopyEvent = @convention(c) (AnyObject, Int64, Int32, UInt64) -> Unmanaged<AnyObject>?
+    private typealias FloatValue = @convention(c) (AnyObject, Int32) -> Double
+
+    /// `kIOHIDEventTypeTemperature`. A field id is the event type shifted into
+    /// the high half — that packing is how IOHIDEvent addresses a value.
+    private static let eventType: Int64 = 15
+    private static let field: Int32 = 15 << 16
+
+    private let copyEvent: CopyEvent
+    private let floatValue: FloatValue
+    /// Held only so the services outlive the initializer — they are the client's.
+    private let client: AnyObject
+    private let services: [AnyObject]
+
+    init?() {
+        guard let image = dlopen(nil, RTLD_LAZY) else { return nil }
+        func sym<T>(_ name: String) -> T? { dlsym(image, name).map { unsafeBitCast($0, to: T.self) } }
+
+        guard let create: Create = sym("IOHIDEventSystemClientCreate"),
+              let setMatching: SetMatching = sym("IOHIDEventSystemClientSetMatching"),
+              let copyServices: CopyServices = sym("IOHIDEventSystemClientCopyServices"),
+              let copyEvent: CopyEvent = sym("IOHIDServiceClientCopyEvent"),
+              let floatValue: FloatValue = sym("IOHIDEventGetFloatValue"),
+              let client = create(kCFAllocatorDefault)?.takeRetainedValue()
+        else { return nil }
+
+        // kHIDPage_AppleVendor / kHIDUsage_AppleVendor_TemperatureSensor. Usage
+        // numbers only mean anything paired with their page, and 5 on any other
+        // page is something else entirely.
+        setMatching(client, ["PrimaryUsagePage": 0xff00, "PrimaryUsage": 5] as CFDictionary)
+        guard let found = copyServices(client)?.takeRetainedValue() as? [AnyObject],
+              !found.isEmpty else { return nil }
+
+        self.copyEvent = copyEvent
+        self.floatValue = floatValue
+        self.client = client
+        self.services = found
+    }
+
+    /// Hottest sensor on the machine, °C.
+    ///
+    /// ponytail: max, not an average of the named core dies. The match already
+    /// narrows this to temperature sensors, and the hottest one is what the
+    /// thermal governor is reacting to — which is the number the throttling pill
+    /// is trying to explain. Filter on each service's `Product` string (the
+    /// P-core dies are `pACC MTR Temp Sensor…`) if a specific one is ever needed.
+    func read() -> Double? {
+        services.lazy.compactMap { svc -> Double? in
+            guard let event = self.copyEvent(svc, Self.eventType, 0, 0)?.takeRetainedValue() else { return nil }
+            // A sensor whose block is powered down answers zero rather than
+            // declining, and a machine at 0°C is not the case worth handling.
+            let c = self.floatValue(event, Self.field)
+            return c > 0 ? c : nil
+        }.max()
+    }
 }
 
 // MARK: - Telemetry
@@ -63,6 +133,11 @@ final class Telemetry {
     private var swapHistory: [(at: Date, mb: Double)] = []
     private var lastCPUTicks: (user: UInt64, sys: UInt64, idle: UInt64, nice: UInt64)?
     private var lastCPUSampleAt: Date?
+
+    /// Built once: enumerating the sensor tree is the expensive half, reading it
+    /// is not. Nil if the private symbols ever go away, and everything downstream
+    /// treats that as "no temperature" rather than failing.
+    private static let temperature = TemperatureSensors()
 
     private var timer: Timer?
     private var pressureSource: DispatchSourceMemoryPressure?
@@ -122,21 +197,25 @@ final class Telemetry {
     // MARK: Power
 
     private func samplePower() {
-        var s = PowerSample()
+        // Keep the last good sample rather than publishing a default one. A miss
+        // here used to read as 0% on battery, which clears `charged` and asserts
+        // `chargerDisconnected` — so the next successful read fired a "Charged"
+        // pill for a battery that had been full the whole time.
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
+              let raw = list.lazy.compactMap({
+                  IOPSGetPowerSourceDescription(blob, $0)?.takeUnretainedValue() as? [String: Any]
+              }).first
+        else { return }
 
-        if let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-           let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
-           let raw = list.lazy.compactMap({
-               IOPSGetPowerSourceDescription(blob, $0)?.takeUnretainedValue() as? [String: Any]
-           }).first {
-            let maxCap = raw[kIOPSMaxCapacityKey] as? Int ?? 100
-            let cur = raw[kIOPSCurrentCapacityKey] as? Int ?? 0
-            s.percent = maxCap > 0 ? Int((Double(cur) / Double(maxCap) * 100).rounded()) : 0
-            s.isCharging = raw[kIOPSIsChargingKey] as? Bool ?? false
-            s.onAC = (raw[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
-            if let m = raw[kIOPSTimeToFullChargeKey] as? Int, m > 0 { s.minutesToFull = m }
-            if let m = raw[kIOPSTimeToEmptyKey] as? Int, m > 0 { s.minutesToEmpty = m }
-        }
+        var s = PowerSample()
+        let maxCap = raw[kIOPSMaxCapacityKey] as? Int ?? 100
+        let cur = raw[kIOPSCurrentCapacityKey] as? Int ?? 0
+        s.percent = maxCap > 0 ? Int((Double(cur) / Double(maxCap) * 100).rounded()) : 0
+        s.isCharging = raw[kIOPSIsChargingKey] as? Bool ?? false
+        s.onAC = (raw[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
+        if let m = raw[kIOPSTimeToFullChargeKey] as? Int, m > 0 { s.minutesToFull = m }
+        if let m = raw[kIOPSTimeToEmptyKey] as? Int, m > 0 { s.minutesToEmpty = m }
 
         if let ad = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any] {
             s.adapterWatts = (ad["Watts"] as? NSNumber)?.doubleValue
@@ -160,11 +239,20 @@ final class Telemetry {
         guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
               let p = props?.takeRetainedValue() as? [String: Any],
               let mV = (p["Voltage"] as? NSNumber)?.doubleValue else { return nil }
-        // Amperage is unsigned in the registry; IsCharging carries the sign.
         let raw = (p["InstantAmperage"] as? NSNumber ?? p["Amperage"] as? NSNumber)?.doubleValue ?? 0
-        let mag = abs(raw > 4e9 ? raw - 4294967296 : raw)  // some firmwares report two's complement
-        let charging = (p["IsCharging"] as? Bool) ?? false
-        return (charging ? mag : -mag, mV)
+        let signed = raw > 4e9 ? raw - 4294967296 : raw  // some firmwares report two's complement
+        // `IsCharging` cannot supply the sign, in either direction. It reads
+        // false through adapter negotiation, above ~95%, and for every top-off
+        // pulse of a hold at full — so inverting a positive reading by it turned
+        // each of those pulses into current flowing the wrong way. Verified on
+        // this machine: `AC; Not Charging; 100%` while the pack is being topped
+        // back up is the steady state at full, not an edge case.
+        //
+        // Only the direction of power flow can settle this, and off AC there is
+        // just one direction, so that is where a bare-magnitude firmware gets
+        // its sign. On AC the firmware's own sign stands.
+        let external = (p["ExternalConnected"] as? Bool) ?? true
+        return (external ? signed : -abs(signed), mV)
     }
 
     // MARK: Stall risk
@@ -175,6 +263,7 @@ final class Telemetry {
         s.swapUsedMB = Self.swapUsedMB()
         s.thermal = ProcessInfo.processInfo.thermalState
         s.cpuPercent = cpuPercent() ?? stall.cpuPercent
+        s.tempC = Self.temperature?.read() ?? stall.tempC
         stall = s
 
         cpuHistory.append(s.cpuPercent)

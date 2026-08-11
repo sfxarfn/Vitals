@@ -5,8 +5,14 @@ import Observation
 @Observable
 @MainActor
 final class NotchController {
+    /// Settings is its own scene with no path back to the delegate that owns
+    /// this, so the running controller publishes itself.
+    private(set) static var shared: NotchController?
+
     private(set) var mode: NotchMode = .idle
     private(set) var metrics = NotchMetrics(notch: .zero)
+    private(set) var cpuGlow: Signal?
+    private(set) var thermalGlow: Signal?
 
     let telemetry = Telemetry()
     let shelf = Shelf()
@@ -33,6 +39,7 @@ final class NotchController {
     private static let eventDuration: TimeInterval = 2.6
 
     func start() {
+        Self.shared = self
         rebuildWindow()
         telemetry.onUpdate = { [weak self] in self?.evaluate() }
         telemetry.start()
@@ -132,7 +139,7 @@ final class NotchController {
     }
 
     /// Q13: when the menu bar is hidden the notch is someone's content. Tier-2
-    /// pills still draw; the resting hairline and hover panel do not.
+    /// pills still draw; the resting glow and hover panel do not.
     /// ponytail: layer-24 probe, swap for a real fullscreen observer if it misreads.
     private func menuBarVisible() -> Bool {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
@@ -156,6 +163,14 @@ final class NotchController {
         )
 
         queue.append(contentsOf: engine.update(reading).map(NotchMode.event))
+
+        // Q13: the glow is resting decoration, so it goes when the menu bar does.
+        // ponytail: re-read on the telemetry tick only, so entering fullscreen
+        // leaves a glow up for one poll. Add a fullscreen observer if that shows.
+        let visible = menuBarVisible()
+        cpuGlow = visible ? engine.cpuGlow : nil
+        thermalGlow = visible ? engine.thermalGlow : nil
+
         presentNext()
     }
 
@@ -174,6 +189,29 @@ final class NotchController {
         }
     }
 
+    // MARK: Demo
+
+    /// Every pill the notch can show, one entry each, so a layout change can be
+    /// eyeballed without waiting on the hardware to misbehave. Tier-1 signals
+    /// are absent on purpose: they glow an edge for as long as they hold rather
+    /// than presenting, so there is nothing to fire.
+    static let previews: [(label: String, mode: NotchMode)] =
+        Signal.allCases.filter { $0.tier == .two }
+            .map { ($0.title, .event(Event(signal: $0))) }
+        + Signal.allCases.filter(\.announcesRecovery)
+            .map { ($0.recoveryTitle, .event(Event(signal: $0, recovered: true))) }
+        + [("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
+           // No level reported — the flank falls back to the Bluetooth mark.
+           ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
+           ("Audio lost", .audioLost)]
+
+    func preview(_ mode: NotchMode) {
+        queue.append(mode)
+        // Whatever is up loses: pressing a second button is a request to see
+        // that pill now, not after the current one times out.
+        if self.mode == .idle { presentNext() } else { collapse() }
+    }
+
     // MARK: Files
 
     func airDrop(_ urls: [URL]) {
@@ -185,7 +223,7 @@ final class NotchController {
     /// Watching the drag pasteboard is what lets the shelf open under the
     /// cursor; from there the panel is live and SwiftUI's own drop takes over.
     private func dragMoved() {
-        guard case .idle = mode, dragBaseline != -1,
+        guard mode == .idle || mode == .peek, dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
               let notch = notchRect, notch.contains(NSEvent.mouseLocation),
               menuBarVisible() else { return }
@@ -218,13 +256,16 @@ final class NotchController {
         guard let screen, let notch = notchRect else { return }
         let p = NSEvent.mouseLocation
 
-        if mode == .expanded {
-            let panel = CGRect(x: screen.frame.midX - metrics.panelWidth / 2,
-                               y: screen.frame.maxY - metrics.size(for: .expanded).height,
-                               width: metrics.panelWidth, height: metrics.size(for: .expanded).height)
+        if mode == .expanded || mode == .peek {
+            // Whichever shape is on screen is the region to stay inside; peek is
+            // a good deal smaller than the panel.
+            let grown = metrics.size(for: mode)
+            let rect = CGRect(x: screen.frame.midX - grown.width / 2,
+                              y: screen.frame.maxY - grown.height,
+                              width: grown.width, height: grown.height)
             // Straying outside mid-drag must not slam the shelf shut with the
             // file still in hand — only a mouse-up ends the drag.
-            if !panel.insetBy(dx: -8, dy: -8).contains(p),
+            if !rect.insetBy(dx: -8, dy: -8).contains(p),
                Date.now.timeIntervalSince(lastDrag) > 0.5 { collapse() }
             return
         }
@@ -238,14 +279,19 @@ final class NotchController {
         dwell = Timer.scheduledTimer(withTimeInterval: Self.dwellDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, notch.contains(NSEvent.mouseLocation), case .idle = self.mode else { return }
-                self.expand()
+                self.expand(.peek)
             }
         }
     }
 
-    private func expand() {
+    /// Both grown states take the mouse — peek has the gear to click. The global
+    /// monitor goes deaf while the pointer is over the panel, but it hears the
+    /// move that leaves it, which is the one collapse needs.
+    private func expand(_ next: NotchMode = .expanded) {
         dwell?.invalidate(); dwell = nil
-        mode = .expanded
+        mode = next
+        // Both grown states show live numbers now — peek's CPU readout would sit
+        // up to 10s stale on the resting poll, which is longer than a hover.
         telemetry.expanded = true
         window?.ignoresMouseEvents = false
     }
@@ -265,6 +311,9 @@ private struct NotchRoot: View {
     var body: some View {
         NotchView(mode: controller.mode,
                   metrics: controller.metrics,
+                  telemetry: controller.telemetry,
+                  cpuGlow: controller.cpuGlow,
+                  thermalGlow: controller.thermalGlow,
                   shelf: controller.shelf,
                   airDrop: controller.airDrop)
             .contextMenu {

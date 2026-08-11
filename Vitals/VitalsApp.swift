@@ -39,6 +39,13 @@ struct SettingsView: View {
                     try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
                     launchAtLogin = SMAppService.mainApp.status == .enabled
                 }
+            Section("Preview") {
+                ForEach(NotchController.previews, id: \.label) { preview in
+                    Button(preview.label) {
+                        NotchController.shared?.preview(preview.mode)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 320)

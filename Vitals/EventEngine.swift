@@ -33,7 +33,10 @@ enum Signal: String, CaseIterable {
     /// hysteresis, which is fine for signals the OS already debounces.
     var thresholds: (assertAbove: Double, clearBelow: Double) {
         switch self {
-        case .netNegativeOnAC:      (0.5, 0.1)
+        // 3W, not a hair over zero: a battery held at full idles around 1W and
+        // the reading wanders either side of it. Below this it is a rounding
+        // error, not an adapter losing the fight.
+        case .netNegativeOnAC:      (3, 1)
         case .charged:              (99.5, 98)
         case .loadFinished:         (0.5, 0.5)
         case .pressureCritical:     (3, 3)
@@ -47,7 +50,13 @@ enum Signal: String, CaseIterable {
 
     func value(_ r: Reading) -> Double {
         switch self {
-        case .netNegativeOnAC:      r.onAC ? -r.batteryWatts : 0
+        // Silent at full. A pack held at 100% is deliberately cycled off the
+        // adapter and topped back up every few minutes — `pmset -g log` shows
+        // AC and Batt alternating seconds apart with nothing else changing —
+        // and each of those dips is a real discharge that means nothing. The
+        // signal is about an adapter losing to the load, which is a question
+        // that only exists while there is still charging left to lose.
+        case .netNegativeOnAC:      r.onAC && r.percent < 100 ? -r.batteryWatts : 0
         case .charged:              Double(r.percent)
         case .loadFinished:         r.loadFinished ? 1 : 0
         case .pressureCritical,
@@ -94,6 +103,16 @@ enum Signal: String, CaseIterable {
         case .thermalSerious, .pressureWarn,
              .cpuSustained, .swapGrowth:            .orange
         case .chargerDisconnected:                  .yellow
+        }
+    }
+
+    /// Says everything in a glyph and one number, so it wears the accessory
+    /// pill's width and layout instead of the full event pill's — the number
+    /// carries more than the word would ("48°", not "Cooled down").
+    var isCompact: Bool {
+        switch self {
+        case .charged, .thermalSerious: true
+        default: false
         }
     }
 
@@ -147,9 +166,21 @@ struct EventEngine {
     /// if you were told about the problem — without this, a signal flapping under
     /// the cooldown would announce recoveries from pills that never appeared.
     private var presented: Set<Signal> = []
+    private var primed = false
 
     /// Returns the tier-2 events that should be presented on this tick.
     mutating func update(_ r: Reading, now: Date = Date()) -> [Event] {
+        // The first reading is a baseline, not news. Every signal here is a
+        // crossing, and nothing has crossed yet — without this the app announces
+        // whatever happened to be true when it started, so launching at 100% on
+        // the charger fires "Charged" for a battery that filled an hour ago.
+        // Rebuilding in Xcode does it on every run.
+        if !primed {
+            primed = true
+            active = Set(Signal.allCases.filter { $0.value(r) > $0.thresholds.assertAbove })
+            return []
+        }
+
         var fired: [Event] = []
         for s in Signal.allCases {
             let v = s.value(r)
@@ -172,18 +203,40 @@ struct EventEngine {
         return fired
     }
 
-    /// Worst currently-asserted tier-1 signal, for the resting hairline.
-    var hairline: Signal? {
-        active.filter { $0.tier == .one }
-            .min { a, b in Signal.allCases.firstIndex(of: a)! < Signal.allCases.firstIndex(of: b)! }
-    }
+    /// The two resting glows, one per notch edge, each on the same side as the
+    /// stat peek shows for it — so a side always means one thing.
+    var cpuGlow: Signal? { active.contains(.cpuSustained) ? .cpuSustained : nil }
+
+    /// The left edge lights only once the governor is actually clamping clocks,
+    /// not merely when the die is warm. A build holds the 70s for twenty minutes
+    /// with nothing wrong, and an edge that is lit through every build is one
+    /// nobody reads by the second week.
+    var thermalGlow: Signal? { active.contains(.thermalSerious) ? .thermalSerious : nil }
 }
 
 #if DEBUG
 enum EventEngineSelfCheck {
-    static func run() {
+    /// An engine primed on a quiet reading, so the checks below can spend their
+    /// first real reading on a crossing rather than on the baseline.
+    private static func primed() -> EventEngine {
         var e = EventEngine()
+        _ = e.update(Reading())
+        return e
+    }
+
+    static func run() {
         let t0 = Date()
+
+        // Launching into a state announces nothing, and having seen it, does not
+        // announce it later either. This is what stops a relaunch at 100% on the
+        // charger from firing "Charged" every single time.
+        var b = EventEngine()
+        let full = Reading(percent: 100, onAC: true, pressure: 4, thermalIndex: 3)
+        assert(b.update(full, now: t0).isEmpty, "the first reading is a baseline, not news")
+        assert(b.update(full, now: t0.addingTimeInterval(EventEngine.cooldown + 1)).isEmpty,
+               "baseline must seed `active`, or the next tick reads as a crossing")
+
+        var e = primed()
 
         // Asserts once, does not re-fire while held.
         var r = Reading(pressure: 4)
@@ -207,7 +260,7 @@ enum EventEngineSelfCheck {
         assert(e.update(r, now: t0.addingTimeInterval(EventEngine.cooldown + 1)) == [Event(signal: .pressureCritical)])
 
         // Hysteresis: CPU sustained holds between 30s and 60s.
-        var h = EventEngine()
+        var h = primed()
         assert(h.update(Reading(cpuSustainedSeconds: 61), now: t0) == [])          // tier 1, never fires
         assert(h.active.contains(.cpuSustained))
         _ = h.update(Reading(cpuSustainedSeconds: 45), now: t0)
@@ -219,14 +272,30 @@ enum EventEngineSelfCheck {
         _ = h.update(Reading(cpuSustainedSeconds: 61), now: t0)
         assert(h.update(Reading(cpuSustainedSeconds: 0), now: t0).isEmpty)
 
+        // The left edge lights from `serious` up. `fair` is fans, not clamped
+        // clocks, and must leave the notch dark.
+        var g = primed()
+        _ = g.update(Reading(thermalIndex: 1), now: t0)
+        assert(g.thermalGlow == nil, "fair is not throttling")
+        _ = g.update(Reading(thermalIndex: 2), now: t0)
+        assert(g.thermalGlow == .thermalSerious)
+
         // Draining on AC only counts while plugged in.
-        var d = EventEngine()
+        var d = primed()
         assert(d.update(Reading(onAC: false, batteryWatts: -12), now: t0).isEmpty)
         assert(d.update(Reading(onAC: true, batteryWatts: -12), now: t0) == [Event(signal: .netNegativeOnAC)])
 
+        // ...and only below full: the top-off cycle at 100% discharges the pack
+        // on purpose, which is the phantom this gate exists to swallow.
+        // (`charged` fires on this same reading, so check for the absence of the
+        // one signal rather than an empty list.)
+        var f = primed()
+        assert(!f.update(Reading(percent: 100, onAC: true, batteryWatts: -12), now: t0)
+            .contains(Event(signal: .netNegativeOnAC)))
+
         // Load finished arrives as a one-shot: Telemetry raises it for a single
         // sample, so the engine must fire on that sample and then go quiet.
-        var l = EventEngine()
+        var l = primed()
         assert(l.update(Reading(loadFinished: true), now: t0) == [Event(signal: .loadFinished)])
         assert(l.update(Reading(loadFinished: false), now: t0.addingTimeInterval(1)).isEmpty)
 

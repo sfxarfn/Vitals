@@ -51,7 +51,8 @@ Two things drove the design and neither is in the original mockup:
 | State | Appearance | Trigger |
 |---|---|---|
 | Rest | Invisible. Stock notch. | — |
-| Tier 1 | Hairline glow on the notch edge. No motion. | Persistent states |
+| Tier 1 | Glow leaking past a notch edge — throttling left, CPU right. No motion. | Persistent states |
+| Peek | Two rows: die temp left, CPU load right, gear below. | Hover dwell |
 | Tier 2 | Pill grows horizontally, symmetric, ~440pt cap, auto-hides | Transient events |
 | Accessory | Narrower pill: glyph in the left flank, battery ring or Bluetooth mark in the right | A Bluetooth accessory connects |
 | Audio lost | Same width as Accessory, two beats: headphones turn over into a red slashed pair, speaker fades up opposite | Bluetooth output falls back to the built-in speakers |
@@ -129,12 +130,23 @@ Tier 2 — interrupts:
   to walk away from. It is a CPU shape, not a build hook, so a long render or a
   Docker image reads the same.
 
-Tier 1 — glows only:
+Tier 1 — glows only. Two edges, so two can show at once:
 
-- Charger disconnected (usually self-caused, but catches a cable that fell out).
-- Memory pressure warning.
-- Sustained CPU above 85% for 60s.
-- Swap grew more than 500MB in 5 minutes.
+- **Right edge, CPU** — sustained CPU above 85% for 60s.
+- **Left edge, throttling** — thermal state at serious or worse. Heat on its own
+  never glows: a build holds the 70s for twenty minutes with nothing wrong, and
+  an edge lit through every build is one nobody reads.
+
+Peek's thermometer glyph carries the finer read of the same state — green while
+nothing is being cut (`nominal` and `fair`, where fans are the only cost),
+orange once the governor starts clamping (`serious`), red when it is clamping
+hard (`critical`). The degrees beside it stay the raw sensor number. No degree
+threshold is used anywhere: 78° is fine on one machine and clamped on another,
+so `thermalState` is the authority and the number is only context.
+
+Asserted but drawn nowhere: charger disconnected, memory pressure warning, swap
+growth. Memory still gets its tier-2 pill at critical; the warning band lost its
+edge when the left one went thermal.
 
 Every signal uses hysteresis plus a 5-minute cooldown. Without it, pressure
 oscillating during a build fires the pill repeatedly.
