@@ -180,6 +180,13 @@ lid-closed, Vitals is invisible.
 
 ## Settled, do not re-litigate
 
+**Vitals cannot be sandboxed.** Xcode's build progress exists nowhere but its
+toolbar — not in DerivedData, not in any notification — so reading it needs the
+Accessibility grant, and a sandboxed app can never hold that: macOS does not
+deny the request, it never registers it, so no dialog appears and no row is
+added to the Accessibility list. `ENABLE_APP_SANDBOX` is `NO` in both configs
+and must stay that way. App Store compatibility was already a non-goal.
+
 **Classic Bluetooth headsets cannot report battery.** Verified on this machine:
 nothing publishes `BatteryPercent` in the IORegistry,
 `/Library/Preferences/com.apple.Bluetooth.plist` has no `DeviceCache` on macOS

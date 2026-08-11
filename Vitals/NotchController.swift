@@ -27,6 +27,7 @@ final class NotchController {
     private var dwell: Timer?
     private var eventDismiss: Timer?
     private let accessories = AccessoryWatcher()
+    private let builds = BuildWatcher()
     private var queue: [NotchMode] = []
     private let dragPasteboard = NSPasteboard(name: .drag)
     private var dragBaseline = -1
@@ -55,6 +56,14 @@ final class NotchController {
             presentNext()
         }
         accessories.start()
+
+        // A build is a state, not an event: it takes over the resting notch and
+        // gives it back when the build ends, so nothing here queues.
+        builds.onChange = { [weak self] in
+            guard let self, atRest else { return }
+            mode = resting
+        }
+        builds.start()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -174,20 +183,37 @@ final class NotchController {
         presentNext()
     }
 
+    /// What the notch falls back to when nothing is being shown. Idle, unless a
+    /// build is running — then the build pill is the floor.
+    private var resting: NotchMode { builds.progress.map(NotchMode.building) ?? .idle }
+
+    private var atRest: Bool {
+        if case .building = mode { return true }
+        return mode == .idle
+    }
+
     private func presentNext() {
-        guard case .idle = mode, !queue.isEmpty else { return }
+        guard atRest, !queue.isEmpty else { return }
         mode = queue.removeFirst()
         eventDismiss?.invalidate()
         eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 // Hovering promotes the pill to the panel, which is the user's
                 // to close — the auto-hide only owns the transient states.
-                guard let self, self.mode != .expanded, self.mode != .idle else { return }
-                self.mode = .idle
+                guard let self, self.mode != .expanded, !self.atRest else { return }
+                self.mode = self.resting
                 self.presentNext()
             }
         }
     }
+
+    // MARK: Permissions
+
+    /// Reading Xcode's toolbar is the only way to see a build, and that needs
+    /// the Accessibility grant. Settings owns the asking; the watcher owns the
+    /// state, which flips back to false every time a dev build is re-signed.
+    var buildAccess: Bool { builds.trusted }
+    func requestBuildAccess() { builds.requestAccess() }
 
     // MARK: Demo
 
@@ -203,13 +229,17 @@ final class NotchController {
         + [("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
            // No level reported — the flank falls back to the Bluetooth mark.
            ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
-           ("Audio lost", .audioLost)]
+           ("Audio lost", .audioLost),
+           ("Building", .building(BuildProgress(label: "Building", done: 3019, total: 6766,
+                                                icon: NSWorkspace.shared
+                                                    .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
+                                                    .map { NSWorkspace.shared.icon(forFile: $0.path) })))]
 
     func preview(_ mode: NotchMode) {
         queue.append(mode)
         // Whatever is up loses: pressing a second button is a request to see
         // that pill now, not after the current one times out.
-        if self.mode == .idle { presentNext() } else { collapse() }
+        if atRest { presentNext() } else { collapse() }
     }
 
     // MARK: Files
@@ -223,7 +253,7 @@ final class NotchController {
     /// Watching the drag pasteboard is what lets the shelf open under the
     /// cursor; from there the panel is live and SwiftUI's own drop takes over.
     private func dragMoved() {
-        guard mode == .idle || mode == .peek, dragBaseline != -1,
+        guard atRest || mode == .peek, dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
               let notch = notchRect, notch.contains(NSEvent.mouseLocation),
               menuBarVisible() else { return }
@@ -271,14 +301,14 @@ final class NotchController {
         }
 
         // Q10: a dwell delay, or the panel fires every time you reach for the menu bar.
-        guard notch.contains(p), menuBarVisible(), case .idle = mode else {
+        guard notch.contains(p), menuBarVisible(), atRest else {
             dwell?.invalidate(); dwell = nil
             return
         }
         guard dwell == nil else { return }
         dwell = Timer.scheduledTimer(withTimeInterval: Self.dwellDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, notch.contains(NSEvent.mouseLocation), case .idle = self.mode else { return }
+                guard let self, notch.contains(NSEvent.mouseLocation), self.atRest else { return }
                 self.expand(.peek)
             }
         }
@@ -298,7 +328,7 @@ final class NotchController {
 
     func collapse() {
         dwell?.invalidate(); dwell = nil
-        mode = .idle
+        mode = resting
         telemetry.expanded = false
         window?.ignoresMouseEvents = true
         presentNext()

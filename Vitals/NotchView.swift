@@ -5,6 +5,9 @@ enum NotchMode: Equatable {
     case event(Event)
     case accessory(Accessory)
     case audioLost
+    /// Xcode is building or archiving. Not an event — it holds for the whole
+    /// build and replaces idle as the resting state until it ends.
+    case building(BuildProgress)
     /// Plain hover: the notch acknowledges the pointer and nothing more.
     case peek
     case expanded
@@ -32,7 +35,8 @@ struct NotchMetrics {
              .audioLost: CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
         // Same flare as the accessory pill, twice as tall — enough to read as
         // "it noticed you" without claiming the screen the way the panel does.
-        case .peek:      CGSize(width: notch.width + accessoryFlank * 2, height: notch.height * 2)
+        case .peek,
+             .building:  CGSize(width: notch.width + accessoryFlank * 2, height: notch.height * 2)
         case .expanded:  CGSize(width: panelWidth, height: notch.height + panelBodyHeight)
         }
     }
@@ -230,6 +234,25 @@ struct NotchView: View {
             .transition(.opacity)
         case .audioLost:
             AudioLostPill(metrics: metrics).transition(.opacity)
+        case .building(let build):
+            // Peek's two-row shape: flanks either side of the camera housing,
+            // stats on the row below where there is real width to read them.
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    buildIcon(build).frame(width: metrics.accessoryFlank)
+                    Spacer(minLength: 0).frame(width: metrics.notch.width)
+                    ring(build.fraction, tint: .blue).frame(width: metrics.accessoryFlank)
+                }
+                .frame(height: metrics.notch.height)
+                Text(build.text)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(height: size.height)
+            .transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
         case .expanded:
             VStack(spacing: 0) {
                 // Camera housing row — anything under it is invisible, so the
@@ -356,18 +379,38 @@ struct NotchView: View {
         telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? "—"
     }
 
+    /// Shared by the accessory pill and the build pill. The floor keeps 1% a
+    /// ring rather than a dot; the ease is what makes a build's arc creep
+    /// instead of jumping a step per poll.
+    private func ring(_ fraction: Double, tint: Color) -> some View {
+        ZStack {
+            Circle().stroke(.white.opacity(0.18), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: max(0.03, min(1, fraction)))
+                .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 20, height: 20)
+        .animation(.easeOut(duration: 0.5), value: fraction)
+    }
+
+    /// The real Xcode icon when the watcher caught it, a hammer when the
+    /// Accessibility grant is missing and there is nothing to copy it from.
+    @ViewBuilder private func buildIcon(_ build: BuildProgress) -> some View {
+        if let icon = build.icon {
+            Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+        } else {
+            Image(systemName: "hammer.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.white)
+        }
+    }
+
     /// A device that never reported a level gets the Bluetooth mark instead —
     /// an empty ring would read as a flat battery.
     @ViewBuilder private func batteryRing(_ accessory: Accessory) -> some View {
         if let level = accessory.battery {
-            ZStack {
-                Circle().stroke(.white.opacity(0.18), lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: max(0.03, Double(level) / 100))
-                    .stroke(accessory.batteryTint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 20, height: 20)
+            ring(Double(level) / 100, tint: accessory.batteryTint)
         } else {
             BluetoothMark()
                 .stroke(Color(red: 0, green: 0.51, blue: 1),

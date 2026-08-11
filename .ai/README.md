@@ -23,6 +23,7 @@ Roughly the order things happen in.
 | [`Telemetry.swift`](../Vitals/Telemetry.swift) | Power and stall-risk sampling. Push where macOS offers it, poll only CPU. |
 | [`EventEngine.swift`](../Vitals/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. Pure value type; has a `DEBUG` self-check. |
 | [`Accessory.swift`](../Vitals/Accessory.swift) | Bluetooth accessory connect detection and battery. |
+| [`BuildWatcher.swift`](../Vitals/BuildWatcher.swift) | Xcode build/archive progress, scraped off the toolbar over the Accessibility API. |
 | [`NotchView.swift`](../Vitals/NotchView.swift) | `NotchMode`, `NotchMetrics`, and every pixel of the notch. |
 | [`NotchShape.swift`](../Vitals/NotchShape.swift) | The outward-flaring notch outline. Third-party, see its header. |
 | [`Shelf.swift`](../Vitals/Shelf.swift) | The drop box and the AirDrop plumbing. |
