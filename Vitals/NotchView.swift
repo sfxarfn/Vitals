@@ -3,6 +3,11 @@ import SwiftUI
 enum NotchMode: Equatable {
     case idle
     case event(Event)
+    /// The one-sided pills, both flanks in one state. They grow out of opposite
+    /// edges and speak for different subsystems, so neither has any reason to
+    /// evict the other — each side comes and goes on its own clock and either
+    /// may be nil. See `Signal.anchor`.
+    case sided(left: Event?, right: Event?)
     case accessory(Accessory)
     case audioLost
     /// Xcode is building or archiving. Not an event — it holds for the whole
@@ -23,20 +28,34 @@ struct NotchMetrics {
     /// The accessory pill only carries a glyph and a ring, so it stops well
     /// short of the event pill's width.
     var accessoryFlank: CGFloat = 62
+    /// The two-row states — the build pill and peek — stack a pair of values in
+    /// each flank, so they need more room than a lone glyph does. Shared, so the
+    /// notch does not change width when a hover lands during a build.
+    var wideFlank: CGFloat = 76
 
     func size(for mode: NotchMode) -> CGSize {
         switch mode {
         case .idle:      notch
         case .event(let event):
-            event.signal.isCompact
-                ? CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
-                : CGSize(width: pillWidth, height: notch.height)
+            if event.signal.isCompact {
+                CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
+            } else {
+                CGSize(width: pillWidth, height: notch.height)
+            }
+        // One flank per live side — see `Signal.anchor`. Same flank width as the
+        // accessory pill, so one side alone grows the familiar amount all on one
+        // side, and both together land on the accessory pill's symmetric shape.
+        case .sided(let left, let right):
+            CGSize(width: notch.width + accessoryFlank * CGFloat([left, right].compactMap { $0 }.count),
+                   height: notch.height)
         case .accessory,
              .audioLost: CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
-        // Same flare as the accessory pill, twice as tall — enough to read as
-        // "it noticed you" without claiming the screen the way the panel does.
-        case .peek,
-             .building:  CGSize(width: notch.width + accessoryFlank * 2, height: notch.height * 2)
+        // A build holds for minutes, so it stays one row tall — the flanks carry
+        // everything and the notch never grows while you work.
+        case .building:  CGSize(width: notch.width + wideFlank * 2, height: notch.height)
+        // Same flare as the build pill, twice as tall — enough to read as "it
+        // noticed you" without claiming the screen the way the panel does.
+        case .peek:      CGSize(width: notch.width + wideFlank * 2, height: notch.height * 2)
         case .expanded:  CGSize(width: panelWidth, height: notch.height + panelBodyHeight)
         }
     }
@@ -126,6 +145,44 @@ struct NotchView: View {
     private let topRadius: CGFloat = 22
     private let bottomRadius: CGFloat = 28
 
+    /// What the morph animates on — the state the notch is in, never the numbers
+    /// inside it. A build republishes its counter every second, and re-running a
+    /// bouncy animation over the two shadow layers that often is what reads as a
+    /// flicker: the geometry never moves, only the shadow gets re-rasterized.
+    /// Compact and full events are split because they are different widths.
+    private var morphKey: Int {
+        switch mode {
+        case .idle:                 0
+        case .event(let event):     event.signal.isCompact ? 1 : 2
+        // A lone left and a lone right pill are the same width and differ only
+        // in which way they lean, so they must not share a key — morphing
+        // between them would slide the shape across the notch instead of
+        // closing and opening. Both sides up is a third shape again.
+        case .sided(let l, let r):  l != nil && r != nil ? 10 : (l != nil ? 9 : 8)
+        case .accessory:            3
+        case .audioLost:            4
+        case .building:             5
+        case .peek:                 6
+        case .expanded:             7
+        }
+    }
+
+    /// Every other state is centred on the notch and flares both ways. A pill
+    /// growing out of one edge only pins the edge it is not growing from, so the
+    /// box slides half its own overhang the other way. Interpolates with the
+    /// width under the same morph, which is what makes it read as growing
+    /// sideways rather than growing and then sliding. Both sides live means the
+    /// shape is symmetric again, so it recentres as the second one arrives.
+    private var xOffset: CGFloat {
+        guard case .sided(let left, let right) = mode else { return 0 }
+        let overhang = (size.width - metrics.notch.width) / 2
+        switch (left, right) {
+        case (.some, .none): return -overhang
+        case (.none, .some): return overhang
+        default:             return 0
+        }
+    }
+
     private var shape: NotchShape {
         NotchShape(topCornerRadius: topRadius,
                    bottomCornerRadius: mode == .idle ? 10 : bottomRadius)
@@ -146,19 +203,39 @@ struct NotchView: View {
                 // extension of the bezel instead of showing the desktop
                 // through it.
                 .background(shape.fill(.black))
-                .overlay(alignment: .top) { content.frame(width: size.width) }
-                // Content is laid out at its final size the instant the mode
-                // flips; the clip is what makes it get revealed by the growing
-                // shape rather than spilling outside it mid-morph.
+                .overlay(alignment: .top) {
+                    content
+                        .frame(width: size.width)
+                        // Content is laid out at its final size the instant the
+                        // mode flips; the clip is what reveals it as the shape
+                        // grows. Without this it interpolates too, and every
+                        // frame of the morph re-runs the whole content's layout
+                        // at a new width — text scale-fitting, the expanded
+                        // panel's ScrollView, all of it, ~50 times per morph.
+                        // Scoped to morphKey so anything animating on its own
+                        // clock in here — the audio-lost turnover, the battery
+                        // swap — is untouched. Every fade that *does* fire on a
+                        // mode change must now carry its own `.animation()`, or
+                        // this nils it into a hard cut.
+                        .transaction(value: morphKey) { $0.animation = nil }
+                }
                 .clipShape(shape)
                 // Grown states lift off the bezel; idle is flush with it, so no
                 // shadow there. Two layers, the way glass casts: a tight contact
                 // shadow at the edge plus a wide diffuse ambient one. Radii and
                 // opacities interpolate with the morph.
-                .shadow(color: .black.opacity(lifted ? 0.55 : 0),
-                        radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
-                .shadow(color: .black.opacity(lifted ? 0.35 : 0),
-                        radius: lifted ? 24 : 0, y: lifted ? 12 : 0)
+                //
+                // Cast off a bare copy of the shape behind the clipped box, not
+                // off the box itself: the blur source is then a solid path with
+                // no content in it, so a build republishing its counter every
+                // second no longer re-blurs two full-window offscreen passes.
+                .background {
+                    shape.fill(.black)
+                        .shadow(color: .black.opacity(lifted ? 0.55 : 0),
+                                radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
+                        .shadow(color: .black.opacity(lifted ? 0.35 : 0),
+                                radius: lifted ? 24 : 0, y: lifted ? 12 : 0)
+                }
                 // Behind the black shape and outside its clip, so only the half
                 // that escapes past each edge is ever seen — that overlap is
                 // what reads as light leaking out rather than a colored border.
@@ -171,10 +248,13 @@ struct NotchView: View {
                 // States that last twenty minutes must not announce themselves;
                 // fading is the whole difference between a glow and a pill.
                 .animation(.easeInOut(duration: 0.5), value: [thermalGlow, cpuGlow])
+                // Last, so it moves the shape, its shadows and its glows as one
+                // piece rather than shifting the box out from under them.
+                .offset(x: xOffset)
             Spacer(minLength: 0)
         }
         .frame(width: metrics.windowSize.width, height: metrics.windowSize.height, alignment: .top)
-        .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: mode)
+        .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: morphKey)
         // The shelf is what expanded is for; a battery panel left up from the
         // last hover would greet the next drag with the wrong row.
         .onChange(of: mode) { if mode == .idle { showBattery = false } }
@@ -186,23 +266,25 @@ struct NotchView: View {
             EmptyView()
         case .peek:
             // Two rows: the camera housing row carrying a stat in each flank,
-            // and the gear centred below. Peek is exactly the accessory pill's
-            // width, so the flanks divide the same way the pills' do.
+            // and the gear centred below. Peek is exactly the build pill's
+            // width, so the flanks divide the same way that pill's do.
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     readout("thermometer.medium", tempValue, tint: tempTint)
-                        .frame(width: metrics.accessoryFlank)
+                        .frame(width: metrics.wideFlank)
                     Spacer(minLength: 0).frame(width: metrics.notch.width)
                     readout("cpu", "\(Int(telemetry.stall.cpuPercent.rounded()))%", tint: .white)
-                        .frame(width: metrics.accessoryFlank)
+                        .frame(width: metrics.wideFlank)
                 }
                 .frame(height: metrics.notch.height)
-                settingsButton(size: 17).frame(maxWidth: .infinity, maxHeight: .infinity)
+                peekRow.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(height: size.height)
             .transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+        case .sided(let left, let right):
+            sidedPill(left, right).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .event(let event) where event.signal.isCompact:
-            compactPill(event).transition(.opacity)
+            compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .event(let event):
             // Anything behind the camera housing is invisible, so the pill puts
             // its glyph and label in the two flanks and leaves the middle empty.
@@ -218,7 +300,7 @@ struct NotchView: View {
             }
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .frame(height: metrics.notch.height)
-            .transition(.opacity)
+            .transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .accessory(let accessory):
             // Same two-flank trick as the event pill: the camera housing owns
             // the middle, so the glyph and the ring take a side each.
@@ -231,27 +313,47 @@ struct NotchView: View {
                 batteryRing(accessory).frame(width: metrics.accessoryFlank)
             }
             .frame(height: metrics.notch.height)
-            .transition(.opacity)
+            .transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .audioLost:
-            AudioLostPill(metrics: metrics).transition(.opacity)
+            AudioLostPill(metrics: metrics).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .building(let build):
-            // Peek's two-row shape: flanks either side of the camera housing,
-            // stats on the row below where there is real width to read them.
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    buildIcon(build).frame(width: metrics.accessoryFlank)
-                    Spacer(minLength: 0).frame(width: metrics.notch.width)
-                    ring(build.fraction, tint: .blue).frame(width: metrics.accessoryFlank)
+            // One row, both flanks stacked: what is running on the left, how far
+            // in on the right. Everything shrinks to fit the notch's own height
+            // rather than growing the pill for the length of a build.
+            HStack(spacing: 0) {
+                VStack(spacing: 1) {
+                    buildIcon(build)
+                    Text(build.label)
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .foregroundStyle(.white.opacity(0.85))
                 }
-                .frame(height: metrics.notch.height)
-                Text(build.text)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: metrics.wideFlank)
+                Spacer(minLength: 0).frame(width: metrics.notch.width)
+                // A finished run's counter is stale the moment it stops moving,
+                // so the whole right flank becomes the verdict instead.
+                Group {
+                    if let ending = build.ending {
+                        Image(systemName: ending == .succeeded ? "checkmark.circle.fill" : "hammer.fill")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(ending == .succeeded ? Color.green : .red)
+                    } else {
+                        HStack(spacing: 5) {
+                            VStack(alignment: .trailing, spacing: 0) {
+                                Text("\(build.done)")
+                                Text("\(build.total)")
+                            }
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                            .foregroundStyle(.white.opacity(0.85))
+                            ring(build.fraction, tint: .blue)
+                        }
+                    }
+                }
+                .frame(width: metrics.wideFlank)
             }
-            .frame(height: size.height)
+            .frame(height: metrics.notch.height)
             .transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
         case .expanded:
             VStack(spacing: 0) {
@@ -282,6 +384,43 @@ struct NotchView: View {
     }
 
     private var flank: CGFloat { (metrics.pillWidth - metrics.notch.width) / 2 }
+
+    /// One message per live flank, with the notch's own width between them. A
+    /// missing side contributes nothing at all — the shape is already narrower
+    /// by that flank, so an empty spacer there would push the live one across
+    /// the camera housing.
+    private func sidedPill(_ left: Event?, _ right: Event?) -> some View {
+        HStack(spacing: 0) {
+            if let left { flank(left) }
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            if let right { flank(right) }
+        }
+        .frame(height: metrics.notch.height)
+    }
+
+    /// Everything sits in a single 15/12 pair rather than the compact pill's
+    /// 17/12, because here the glyph and its value share a flank instead of
+    /// owning one each.
+    private func flank(_ event: Event) -> some View {
+        HStack(spacing: 4) {
+            // Load finished is a verdict on work, not a reading: it leads
+            // with what was busy and lets the checkmark be the news, where
+            // every other one-sided pill leads with its own glyph.
+            if event.signal == .loadFinished {
+                Image(systemName: "cpu").foregroundStyle(.white)
+                Image(systemName: event.symbol).foregroundStyle(event.tint)
+            } else {
+                Image(systemName: event.symbol).foregroundStyle(event.tint)
+                Text(compactValue(event))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .foregroundStyle(.white)
+            }
+        }
+        .font(.system(size: 15, weight: .medium))
+        .frame(width: metrics.accessoryFlank)
+    }
 
     /// Same two-flank shape as the accessory pill: tinted glyph on the left, a
     /// live number on the right, camera housing in between.
@@ -328,7 +467,8 @@ struct NotchView: View {
 
     private func glowBar(_ signal: Signal?) -> some View {
         Capsule()
-            .fill(signal?.tint ?? .clear)
+            // `glowTint`, not `tint`: the edge is orange or dark, never red.
+            .fill(signal?.glowTint ?? .clear)
             // Exactly the shape's height, never more: the blur already carries
             // the spill past the bottom corner, whereas an overhanging bar puts
             // its unmasked core down there and the blob comes back.
@@ -357,20 +497,12 @@ struct NotchView: View {
         }
     }
 
-    /// Throttling state, not the thermometer. A die at 78° is fine on one
-    /// machine and clamped on another, so a degree threshold could only ever
-    /// approximate what `thermalState` reports outright — green is nothing cut,
-    /// orange is the governor starting to clamp, red is it clamping hard. The
-    /// number beside the glyph stays the raw reading.
+    /// The same ladder the left edge is glowing on, read off the same signal —
+    /// green under 60, orange from 70, red from 80 — so the hovered number and
+    /// the glow beside it can never disagree. Hysteresis comes free with it.
     private var tempTint: Color {
         guard telemetry.stall.tempC != nil else { return .white.opacity(0.4) }
-        switch telemetry.stall.thermal {
-        case .serious:  return .orange
-        case .critical: return .red
-        // `fair` is fans spinning up, which costs no performance and is not
-        // news — it stays green alongside `nominal`.
-        default:        return .green
-        }
+        return thermalGlow?.tint ?? .green
     }
 
     /// A machine whose sensor tree we cannot read gets a dash, not a zero — 0°
@@ -396,13 +528,16 @@ struct NotchView: View {
 
     /// The real Xcode icon when the watcher caught it, a hammer when the
     /// Accessibility grant is missing and there is nothing to copy it from.
+    /// 16pt, not the accessory glyph's 20 — the label stacks under it and the
+    /// pair has to clear the notch's own height.
     @ViewBuilder private func buildIcon(_ build: BuildProgress) -> some View {
         if let icon = build.icon {
-            Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
         } else {
             Image(systemName: "hammer.fill")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white)
+                .frame(height: 16)
         }
     }
 
@@ -417,6 +552,77 @@ struct NotchView: View {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 .frame(width: 11, height: 18)
         }
+    }
+
+    /// Peek's second row: the charge state in words, then the gear. The glyph on
+    /// its own said how full the battery was and nothing about where the power
+    /// was going, which is the half a hover is asking for.
+    private var peekRow: some View {
+        HStack(spacing: 10) {
+            batteryStatus
+            Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
+            SettingsLink {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white.opacity(settingsHovered ? 0.9 : 0.45))
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { settingsHovered = $0 }
+            .animation(.snappy(duration: 0.15), value: settingsHovered)
+        }
+    }
+
+    private var batteryStatus: some View {
+        HStack(spacing: 7) {
+            // SF Symbols ships no upright battery, so the horizontal glyph is
+            // turned on its side. `rotationEffect` does not touch layout, hence
+            // the explicit box in the rotated proportions.
+            Image(systemName: telemetry.power.isCharging
+                  ? "battery.100percent.bolt"
+                  : "battery.\(batteryStep)percent")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 13, height: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(powerSource)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                Text(chargeDetail)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .monospacedDigit()
+            .lineLimit(1).minimumScaleFactor(0.7)
+        }
+    }
+
+    /// First line: what the machine is running on. Same caveat as `chargeState` —
+    /// `isCharging` reads false through adapter negotiation and for every top-off
+    /// pulse of a hold at full, so a full pack is decided by the level, not by
+    /// that flag.
+    private var powerSource: String {
+        let p = telemetry.power
+        guard p.onAC else { return "On Battery" }
+        return p.percent >= 95 ? "Fully Charged" : (p.isCharging ? "Charging" : "Plugged In")
+    }
+
+    /// Second line: where the power is coming from, which is what the first line
+    /// leaves open.
+    private var chargeDetail: String {
+        let p = telemetry.power
+        guard p.onAC else { return p.minutesToEmpty.map(duration) ?? "\(p.percent)%" }
+        // A full pack means nothing is flowing into it — the wattage stops being
+        // the story and the adapter is simply running the machine.
+        guard p.percent < 95, let rated = p.adapterWatts else { return "Using Direct Power" }
+        var source = "Source: \(Int(rated.rounded()))W"
+        // Only worth the parenthesis when the port did not hand over the brick's
+        // full rating — otherwise it is the same number said twice.
+        if let live = p.adapterContractWatts, abs(live - rated) >= 1 {
+            source += " (\(Int(live.rounded()))W)"
+        }
+        return source
     }
 
     private func settingsButton(size: CGFloat = 12) -> some View {

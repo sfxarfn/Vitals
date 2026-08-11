@@ -120,7 +120,7 @@ Tier 2 — interrupts:
   mid-call and you are now talking to the room. CoreAudio reports the route and
   not the reason, so choosing the switch by hand fires it too; that miss is
   cheap next to the one it catches.
-- Memory pressure or thermal state recovered. The all-clear only fires for
+- Memory pressure or heat recovered. The all-clear only fires for
   signals whose alarm actually reached the notch — these are the two states you
   stop and wait out, so "go back to work" is worth saying. Nothing else gets a
   recovery; nobody is waiting for the battery to stop being full.
@@ -133,16 +133,20 @@ Tier 2 — interrupts:
 Tier 1 — glows only. Two edges, so two can show at once:
 
 - **Right edge, CPU** — sustained CPU above 85% for 60s.
-- **Left edge, throttling** — thermal state at serious or worse. Heat on its own
-  never glows: a build holds the 70s for twenty minutes with nothing wrong, and
-  an edge lit through every build is one nobody reads.
+- **Left edge, heat** — the hottest die sensor: orange from 80°, dark again at
+  65°. Orange or nothing, never red: the edge is peripheral vision, and red out
+  there reads as an alarm to act on where a hot die mid-build is just a fact.
+  The 15° gap between lighting and clearing is hysteresis, so a die parked on
+  the threshold does not strobe the edge.
 
-Peek's thermometer glyph carries the finer read of the same state — green while
-nothing is being cut (`nominal` and `fair`, where fans are the only cost),
-orange once the governor starts clamping (`serious`), red when it is clamping
-hard (`critical`). The degrees beside it stay the raw sensor number. No degree
-threshold is used anywhere: 78° is fine on one machine and clamped on another,
-so `thermalState` is the authority and the number is only context.
+Peek's thermometer glyph reads off the same signal as the edge and carries the
+finer level the edge does not: green, orange from 80°, red from 85°, back to
+orange under 75°, green again at 65°. The degrees beside it are the raw sensor
+number. Degrees, not `thermalState`: the four words move too late and too
+coarsely to describe a machine getting hot, and the tier-2 pill at 85° is the
+one that says the governor is now involved. Its all-clear waits for green
+rather than for red clearing — "Cooled down" over an edge still glowing orange
+would contradict itself.
 
 Asserted but drawn nowhere: charger disconnected, memory pressure warning, swap
 growth. Memory still gets its tier-2 pill at critical; the warning band lost its

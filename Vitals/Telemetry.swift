@@ -13,7 +13,8 @@ struct PowerSample {
     var minutesToFull: Int?
     var minutesToEmpty: Int?
     var adapterName: String?
-    var adapterWatts: Double?      // negotiated at the wall
+    var adapterWatts: Double?         // what the brick is rated for
+    var adapterContractWatts: Double? // what the port actually agreed to deliver
     var batteryWatts: Double = 0   // signed: + charging, - draining
 
     /// What the machine itself is burning: wall input minus what reaches the cells.
@@ -26,7 +27,6 @@ struct PowerSample {
 struct StallSample {
     var pressure: Int32 = 1        // 1 normal, 2 warn, 4 critical
     var swapUsedMB: Double = 0
-    var thermal: ProcessInfo.ThermalState = .nominal
     var cpuPercent: Double = 0
     /// Hottest die sensor, °C. Nil on a machine whose sensor tree we cannot read.
     var tempC: Double?
@@ -159,7 +159,9 @@ final class Telemetry {
         src.resume()
         pressureSource = src
 
-        // Push: thermal state.
+        // Push: thermal state. The four words themselves are no longer used —
+        // the die reading drives everything now — but a state change is a free
+        // nudge to go re-read that sensor at the moment it matters.
         NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.sampleStall(); self?.onUpdate?() }
@@ -221,17 +223,44 @@ final class Telemetry {
             s.adapterWatts = (ad["Watts"] as? NSNumber)?.doubleValue
             s.adapterName = (ad["Name"] as? String)?.trimmingCharacters(in: .whitespaces)
         }
+        if s.onAC { s.adapterContractWatts = Self.adapterContractWatts() }
 
         // Signed battery power. Sandbox-safe path first, raw registry as the richer fallback.
-        if let (mA, mV) = Self.batteryCurrentAndVoltage() {
+        if let (mA, mV, mAh) = Self.batteryCurrentAndVoltage() {
             s.batteryWatts = (mA / 1000.0) * (mV / 1000.0)
+            // IOPS withholds `TimeToEmpty` for the first minute off the charger
+            // and any time the draw is still jumping, and a battery with no
+            // estimate is exactly when you look. Charge over current is the same
+            // arithmetic without the smoothing, so it only fills the gap.
+            if s.minutesToEmpty == nil, !s.onAC, mA < -1, mAh > 0 {
+                s.minutesToEmpty = Int(mAh / -mA * 60)
+            }
         }
 
         power = s
     }
 
-    /// Returns (milliamps signed, millivolts).
-    private static func batteryCurrentAndVoltage() -> (Double, Double)? {
+    /// Watts of the USB-C contract actually in force, which the brick's rating
+    /// does not tell you — a 35W charger on a port sharing its lane settles at
+    /// 27W. Only `AppleSmartBattery`'s `AdapterDetails` carries the negotiated
+    /// voltage and current; the IOPS adapter dictionary stops at the rating.
+    private static func adapterContractWatts() -> Double? {
+        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard svc != 0 else { return nil }
+        defer { IOObjectRelease(svc) }
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let p = props?.takeRetainedValue() as? [String: Any],
+              let ad = p["AdapterDetails"] as? [String: Any],
+              let mV = (ad["Voltage"] as? NSNumber)?.doubleValue,
+              let mA = (ad["Current"] as? NSNumber)?.doubleValue,
+              mV > 0, mA > 0 else { return nil }
+        return (mV / 1000) * (mA / 1000)
+    }
+
+    /// Returns (milliamps signed, millivolts, charge left in mAh — 0 if the
+    /// firmware does not publish it).
+    private static func batteryCurrentAndVoltage() -> (Double, Double, Double)? {
         let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard svc != 0 else { return nil }
         defer { IOObjectRelease(svc) }
@@ -252,7 +281,10 @@ final class Telemetry {
         // just one direction, so that is where a bare-magnitude firmware gets
         // its sign. On AC the firmware's own sign stands.
         let external = (p["ExternalConnected"] as? Bool) ?? true
-        return (external ? signed : -abs(signed), mV)
+        // `AppleRawCurrentCapacity` is mAh; the plain `CurrentCapacity` on this
+        // node is a percentage, which would read as a nearly flat pack.
+        let mAh = (p["AppleRawCurrentCapacity"] as? NSNumber)?.doubleValue ?? 0
+        return (external ? signed : -abs(signed), mV, mAh)
     }
 
     // MARK: Stall risk
@@ -261,7 +293,6 @@ final class Telemetry {
         var s = StallSample()
         s.pressure = Self.sysctlInt32("kern.memorystatus_vm_pressure_level") ?? 1
         s.swapUsedMB = Self.swapUsedMB()
-        s.thermal = ProcessInfo.processInfo.thermalState
         s.cpuPercent = cpuPercent() ?? stall.cpuPercent
         s.tempC = Self.temperature?.read() ?? stall.tempC
         stall = s

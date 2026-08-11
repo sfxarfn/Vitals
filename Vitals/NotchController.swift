@@ -29,6 +29,12 @@ final class NotchController {
     private let accessories = AccessoryWatcher()
     private let builds = BuildWatcher()
     private var queue: [NotchMode] = []
+    /// The one-sided pills currently up, keyed by the edge they grew out of, and
+    /// a dismiss timer each. Two flanks, two subsystems, two clocks: a left pill
+    /// arriving while a right one is up joins it rather than waiting behind it,
+    /// and each leaves when its own 2.6s is spent.
+    private var sided: [PillAnchor: Event] = [:]
+    private var sidedDismiss: [PillAnchor: Timer] = [:]
     private let dragPasteboard = NSPasteboard(name: .drag)
     private var dragBaseline = -1
     // Global monitors go deaf once the pointer is over our own window, and a
@@ -165,7 +171,7 @@ final class NotchController {
             onAC: p.onAC,
             batteryWatts: p.batteryWatts,
             pressure: s.pressure,
-            thermalIndex: [.nominal: 0, .fair: 1, .serious: 2, .critical: 3][s.thermal] ?? 0,
+            dieTempC: s.tempC ?? 0,
             cpuSustainedSeconds: telemetry.cpuSustainedSeconds,
             swapGrowthMB: telemetry.swapGrowthMB,
             loadFinished: telemetry.loadFinished
@@ -188,19 +194,85 @@ final class NotchController {
     private var resting: NotchMode { builds.progress.map(NotchMode.building) ?? .idle }
 
     private var atRest: Bool {
-        if case .building = mode { return true }
-        return mode == .idle
+        switch mode {
+        case .idle, .building: true
+        default: false
+        }
+    }
+
+    private var showingSided: Bool {
+        if case .sided = mode { return true }
+        return false
     }
 
     private func presentNext() {
-        guard atRest, !queue.isEmpty else { return }
-        mode = queue.removeFirst()
+        // Walks the queue rather than taking one: a one-sided pill can go up
+        // beside another one, so several entries may be presentable at once.
+        // Anything that owns the whole notch still stops the walk — it has to
+        // wait for the flanks to clear, and for the ones behind it to keep their
+        // order behind it.
+        while let next = queue.first {
+            if case .event(let event) = next, event.signal.anchor != .center {
+                guard atRest || showingSided, sided[event.signal.anchor] == nil else { return }
+                queue.removeFirst()
+                present(event, on: event.signal.anchor)
+                continue
+            }
+            guard atRest else { return }
+            queue.removeFirst()
+            presentFull(next)
+            return
+        }
+    }
+
+    private func present(_ event: Event, on anchor: PillAnchor) {
+        sided[anchor] = event
+        mode = .sided(left: sided[.left], right: sided[.right])
+        sidedDismiss[anchor] = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // The flank is released whether or not these pills are still the
+                // thing on screen — this timer is the only owner of the slot, so
+                // bailing out early strands it and every later event anchored
+                // there queues up behind a flank that never frees.
+                self.sided[anchor] = nil
+                self.sidedDismiss[anchor] = nil
+                if self.showingSided {
+                    self.mode = self.sided.isEmpty ? self.resting
+                                                   : .sided(left: self.sided[.left], right: self.sided[.right])
+                }
+                self.presentNext()
+            }
+        }
+    }
+
+    /// Drops both flanks at once — for the paths that take the notch away from
+    /// the pills entirely, where letting the timers fire later would put a
+    /// stale pill back over whatever replaced it.
+    private func clearSided() {
+        sidedDismiss.values.forEach { $0.invalidate() }
+        sidedDismiss.removeAll()
+        sided.removeAll()
+    }
+
+    private func presentFull(_ next: NotchMode) {
+        mode = next
         eventDismiss?.invalidate()
         eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                // Hovering promotes the pill to the panel, which is the user's
-                // to close — the auto-hide only owns the transient states.
-                guard let self, self.mode != .expanded, !self.atRest else { return }
+                // Only the pill this timer was armed for may be taken down by
+                // it. Anything that happened since — a hover, a sided pill, the
+                // next preview — owns the notch now, and clearing the mode out
+                // from under it strands that state's bookkeeping: a hover left
+                // with the panel still taking the mouse, a flank whose slot is
+                // never released.
+                //
+                // Comparing against the pill also covers the two old guards. A
+                // hover is not the pill, so it holds until the user leaves it. A
+                // real build *is* the resting state and is never presented this
+                // way, so it holds; a previewed one is, so it times out like
+                // every other pill.
+                guard let self, self.mode == next else { return }
                 self.mode = self.resting
                 self.presentNext()
             }
@@ -230,16 +302,30 @@ final class NotchController {
            // No level reported — the flank falls back to the Bluetooth mark.
            ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
            ("Audio lost", .audioLost),
-           ("Building", .building(BuildProgress(label: "Building", done: 3019, total: 6766,
-                                                icon: NSWorkspace.shared
-                                                    .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
-                                                    .map { NSWorkspace.shared.icon(forFile: $0.path) })))]
+           ("Building", .building(buildPreview("Building", nil))),
+           ("Build canceled", .building(buildPreview("Canceled", .canceled))),
+           ("Archive succeeded", .building(buildPreview("Archived", .succeeded)))]
+
+    private static func buildPreview(_ label: String, _ ending: BuildProgress.Ending?) -> BuildProgress {
+        BuildProgress(label: label, done: 3019, total: 6766,
+                      icon: NSWorkspace.shared
+                          .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
+                          .map { NSWorkspace.shared.icon(forFile: $0.path) },
+                      ending: ending)
+    }
 
     func preview(_ mode: NotchMode) {
         queue.append(mode)
         // Whatever is up loses: pressing a second button is a request to see
-        // that pill now, not after the current one times out.
-        if atRest { presentNext() } else { collapse() }
+        // that pill now, not after the current one times out. Flanks are the
+        // exception — they are the thing you press two buttons to see together,
+        // so the queue gets first refusal. A press that drains nothing was
+        // blocked by what is up (an occupied flank, a pill mid-life), and that
+        // is exactly the case where the notch has to be cleared for it — the
+        // button has to do something visible every single time it is pressed.
+        let queued = queue.count
+        if atRest || showingSided { presentNext() }
+        if queue.count == queued { collapse() }
     }
 
     // MARK: Files
@@ -328,6 +414,7 @@ final class NotchController {
 
     func collapse() {
         dwell?.invalidate(); dwell = nil
+        clearSided()
         mode = resting
         telemetry.expanded = false
         window?.ignoresMouseEvents = true

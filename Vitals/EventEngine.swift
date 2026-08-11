@@ -4,6 +4,9 @@ import SwiftUI
 /// Loudness. Tier 1 glows the notch edge; tier 2 drops the pill open and auto-hides.
 enum Tier { case one, two }
 
+/// Which notch edge a tier-2 pill grows out of. See `Signal.anchor`.
+enum PillAnchor { case center, left, right }
+
 /// A flattened view of telemetry. Every signal is a number with two thresholds,
 /// which keeps the engine free of per-signal special cases.
 struct Reading {
@@ -11,7 +14,9 @@ struct Reading {
     var onAC = false
     var batteryWatts = 0.0
     var pressure: Int32 = 1
-    var thermalIndex = 0
+    /// Die temperature, or 0 on a machine whose sensor tree we cannot read —
+    /// which sits under every thermal threshold, so a missing sensor is silent.
+    var dieTempC = 0.0
     var cpuSustainedSeconds = 0.0
     var swapGrowthMB = 0.0
     var loadFinished = false
@@ -19,13 +24,14 @@ struct Reading {
 
 enum Signal: String, CaseIterable {
     case netNegativeOnAC, charged, loadFinished, pressureCritical, thermalSerious
-    case chargerDisconnected, pressureWarn, cpuSustained, swapGrowth
+    case chargerDisconnected, pressureWarn, cpuSustained, swapGrowth, thermalWarm
 
     var tier: Tier {
         switch self {
         case .netNegativeOnAC, .charged, .loadFinished,
              .pressureCritical, .thermalSerious: .two
-        case .chargerDisconnected, .pressureWarn, .cpuSustained, .swapGrowth: .one
+        case .chargerDisconnected, .pressureWarn, .cpuSustained,
+             .swapGrowth, .thermalWarm: .one
         }
     }
 
@@ -40,7 +46,17 @@ enum Signal: String, CaseIterable {
         case .charged:              (99.5, 98)
         case .loadFinished:         (0.5, 0.5)
         case .pressureCritical:     (3, 3)
-        case .thermalSerious:       (1.5, 1.5)
+        // Degrees off the hottest die sensor, in one ladder: warm at 80, hot at
+        // 85, back to warm under 75, and all the way to green under 60. The
+        // clear-below numbers are what stop a build oscillating around a single
+        // degree from strobing the edge — a die crossing 80 sits there, it does
+        // not tap it. Red's band is tighter than orange's because 85 is a place
+        // the machine passes through, not one it settles at.
+        case .thermalSerious:       (85, 75)
+        // 65.5, not 65: peek prints the rounded degree, and a die at 65.4 shown
+        // as "65°" in orange next to a rule that says 65 is green reads as a bug.
+        // Clear where the displayed number clears.
+        case .thermalWarm:          (80, 65.5)
         case .chargerDisconnected:  (0.5, 0.5)
         case .pressureWarn:         (1.5, 1.5)
         case .cpuSustained:         (60, 30)
@@ -61,7 +77,8 @@ enum Signal: String, CaseIterable {
         case .loadFinished:         r.loadFinished ? 1 : 0
         case .pressureCritical,
              .pressureWarn:         Double(r.pressure)
-        case .thermalSerious:       Double(r.thermalIndex)
+        case .thermalSerious,
+             .thermalWarm:          r.dieTempC
         case .chargerDisconnected:  r.onAC ? 0 : 1
         case .cpuSustained:         r.cpuSustainedSeconds
         case .swapGrowth:           r.swapGrowthMB
@@ -75,6 +92,7 @@ enum Signal: String, CaseIterable {
         case .loadFinished:         "checkmark.circle.fill"
         case .pressureCritical:     "memorychip.fill"
         case .thermalSerious:       "thermometer.high"
+        case .thermalWarm:          "thermometer.medium"
         case .chargerDisconnected:  "powerplug"
         case .pressureWarn:         "memorychip"
         case .cpuSustained:         "cpu"
@@ -88,7 +106,8 @@ enum Signal: String, CaseIterable {
         case .charged:              "Charged"
         case .loadFinished:         "Load finished"
         case .pressureCritical:     "Memory critical"
-        case .thermalSerious:       "Throttling"
+        case .thermalSerious:       "Running hot"
+        case .thermalWarm:          "Warm"
         case .chargerDisconnected:  "Unplugged"
         case .pressureWarn:         "Memory pressure"
         case .cpuSustained:         "CPU pegged"
@@ -99,20 +118,43 @@ enum Signal: String, CaseIterable {
     var tint: Color {
         switch self {
         case .charged, .loadFinished:               .green
-        case .pressureCritical, .netNegativeOnAC:   .red
-        case .thermalSerious, .pressureWarn,
+        case .pressureCritical, .netNegativeOnAC,
+             .thermalSerious:                       .red
+        case .thermalWarm, .pressureWarn,
              .cpuSustained, .swapGrowth:            .orange
         case .chargerDisconnected:                  .yellow
         }
     }
+
+    /// What the edge glows, which is not always what the signal is tinted. Heat
+    /// glows orange at every level: the edge sits in peripheral vision, where
+    /// red reads as an alarm you have to act on — and a die at 90° through a
+    /// long build is a fact, not an emergency. Red stays where you went looking
+    /// for it, on the glyph and the pill.
+    var glowTint: Color { self == .thermalSerious ? .orange : tint }
 
     /// Says everything in a glyph and one number, so it wears the accessory
     /// pill's width and layout instead of the full event pill's — the number
     /// carries more than the word would ("48°", not "Cooled down").
     var isCompact: Bool {
         switch self {
-        case .charged, .thermalSerious: true
+        case .charged: true
         default: false
+        }
+    }
+
+    /// Which way the pill grows. Centre is the default and splits its message
+    /// across the two flanks. A one-sided pill has only one thing to say — a
+    /// glyph and at most one number — so a symmetric shape would spend the far
+    /// flank on nothing and the notch sliding both ways would read louder than
+    /// the news is. Side is identity, not decoration: thermal always arrives on
+    /// the left and stays there through its own all-clear, so a glance at which
+    /// edge moved already says which subsystem is talking.
+    var anchor: PillAnchor {
+        switch self {
+        case .loadFinished:   .right
+        case .thermalSerious: .left
+        default:              .center
         }
     }
 
@@ -123,6 +165,17 @@ enum Signal: String, CaseIterable {
         switch self {
         case .pressureCritical, .thermalSerious: true
         default: false
+        }
+    }
+
+    /// Which signal's clear actually means "go back to work". Usually its own,
+    /// but thermal hands its all-clear down a rung: red falling to orange at 75°
+    /// is still a machine running hot, and a "Cooled down" pill over an edge
+    /// still glowing orange contradicts itself. The pill waits for green.
+    var recoveryClearedBy: Signal {
+        switch self {
+        case .thermalSerious: .thermalWarm
+        default:              self
         }
     }
 
@@ -188,9 +241,12 @@ struct EventEngine {
             if active.contains(s) {
                 guard v < off else { continue }
                 active.remove(s)
-                if s.announcesRecovery, presented.remove(s) != nil {
-                    fired.append(Event(signal: s, recovered: true))
-                }
+                // The all-clear need not belong to the signal that just cleared
+                // — see `recoveryClearedBy`. Thermal's red is owed its pill by
+                // the orange band underneath it.
+                let owed = presented.filter { $0.announcesRecovery && $0.recoveryClearedBy == s }
+                presented.subtract(owed)
+                fired.append(contentsOf: owed.map { Event(signal: $0, recovered: true) })
             } else if v > on {
                 active.insert(s)
                 guard s.tier == .two else { continue }
@@ -207,11 +263,14 @@ struct EventEngine {
     /// stat peek shows for it — so a side always means one thing.
     var cpuGlow: Signal? { active.contains(.cpuSustained) ? .cpuSustained : nil }
 
-    /// The left edge lights only once the governor is actually clamping clocks,
-    /// not merely when the die is warm. A build holds the 70s for twenty minutes
-    /// with nothing wrong, and an edge that is lit through every build is one
-    /// nobody reads by the second week.
-    var thermalGlow: Signal? { active.contains(.thermalSerious) ? .thermalSerious : nil }
+    /// The thermal level: warm from 80°, hot from 85°, nil once the die is back
+    /// to 65°. Hot wins over warm — both are asserted up there, and one edge can
+    /// only say one thing. The edge itself renders every level orange (see
+    /// `glowTint`); the peek glyph is what carries hot as red.
+    var thermalGlow: Signal? {
+        if active.contains(.thermalSerious) { return .thermalSerious }
+        return active.contains(.thermalWarm) ? .thermalWarm : nil
+    }
 }
 
 #if DEBUG
@@ -231,7 +290,7 @@ enum EventEngineSelfCheck {
         // announce it later either. This is what stops a relaunch at 100% on the
         // charger from firing "Charged" every single time.
         var b = EventEngine()
-        let full = Reading(percent: 100, onAC: true, pressure: 4, thermalIndex: 3)
+        let full = Reading(percent: 100, onAC: true, pressure: 4, dieTempC: 90)
         assert(b.update(full, now: t0).isEmpty, "the first reading is a baseline, not news")
         assert(b.update(full, now: t0.addingTimeInterval(EventEngine.cooldown + 1)).isEmpty,
                "baseline must seed `active`, or the next tick reads as a crossing")
@@ -272,13 +331,34 @@ enum EventEngineSelfCheck {
         _ = h.update(Reading(cpuSustainedSeconds: 61), now: t0)
         assert(h.update(Reading(cpuSustainedSeconds: 0), now: t0).isEmpty)
 
-        // The left edge lights from `serious` up. `fair` is fans, not clamped
-        // clocks, and must leave the notch dark.
+        // The left edge walks the ladder: dark, orange at 80, red at 85, and
+        // back down through orange before it goes out under 60.
         var g = primed()
-        _ = g.update(Reading(thermalIndex: 1), now: t0)
-        assert(g.thermalGlow == nil, "fair is not throttling")
-        _ = g.update(Reading(thermalIndex: 2), now: t0)
-        assert(g.thermalGlow == .thermalSerious)
+        _ = g.update(Reading(dieTempC: 78), now: t0)
+        assert(g.thermalGlow == nil, "78° is not warm yet")
+        _ = g.update(Reading(dieTempC: 82), now: t0)
+        assert(g.thermalGlow == .thermalWarm)
+        assert(g.update(Reading(dieTempC: 87), now: t0) == [Event(signal: .thermalSerious)])
+        assert(g.thermalGlow == .thermalSerious, "hot must win over warm")
+        assert(Signal.thermalSerious.glowTint == .orange, "the edge never goes red")
+        _ = g.update(Reading(dieTempC: 78), now: t0)
+        assert(g.thermalGlow == .thermalSerious, "must not clear red inside its band")
+
+        // Red falling to orange is not an all-clear: the pill is owed to green.
+        assert(g.update(Reading(dieTempC: 72), now: t0).isEmpty, "no all-clear while still orange")
+        assert(g.thermalGlow == .thermalWarm, "cooling out of red drops back to orange")
+        assert(g.update(Reading(dieTempC: 66), now: t0).isEmpty)
+        assert(g.thermalGlow == .thermalWarm, "orange holds to 65")
+        assert(g.update(Reading(dieTempC: 65), now: t0) == [Event(signal: .thermalSerious, recovered: true)],
+               "the all-clear lands with green, and once")
+        assert(g.thermalGlow == nil)
+        assert(g.update(Reading(dieTempC: 55), now: t0).isEmpty)
+
+        // A machine with no readable sensor reports 0°, which must stay dark
+        // rather than reading as ice-cold-and-fine on a warm die.
+        var n = primed()
+        _ = n.update(Reading(), now: t0)
+        assert(n.thermalGlow == nil)
 
         // Draining on AC only counts while plugged in.
         var d = primed()
