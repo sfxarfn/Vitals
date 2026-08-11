@@ -3,26 +3,35 @@
 //  Vitals
 //
 
+import CoreAudio
+import CoreBluetooth
 import Foundation
 import IOKit
+import IOKit.hid
 import SwiftUI
 
-/// A wireless accessory the Mac just picked up. Battery is optional — plenty of
-/// devices publish the service without ever filling the key in.
+/// A wireless accessory the Mac just picked up. Battery is optional: only BLE
+/// devices that publish the GATT Battery Service ever report one, so classic
+/// Bluetooth headsets arrive with nothing but a name.
 struct Accessory: Equatable {
+    enum Kind { case audio, keyboard, pointer, gamepad }
+
     var name: String
+    var kind: Kind
     var battery: Int?
 
     var symbol: String {
         let n = name.lowercased()
-        if n.contains("airpods max")    { return "airpods.max" }
-        if n.contains("airpods pro")    { return "airpodspro" }
-        if n.contains("airpods")        { return "airpods" }
-        if n.contains("beats")          { return "beats.headphones" }
-        if n.contains("mouse")          { return "magicmouse.fill" }
-        if n.contains("trackpad")       { return "trackpad.fill" }
-        if n.contains("keyboard")       { return "keyboard.fill" }
-        return "headphones"
+        if n.contains("airpods max") { return "airpods.max" }
+        if n.contains("airpods pro") { return "airpods.pro" }
+        if n.contains("airpods")     { return "airpods" }
+        if n.contains("beats")       { return "beats.headphones" }
+        switch kind {
+        case .audio:    return n.contains("speaker") ? "hifispeaker.fill" : "headphones"
+        case .keyboard: return "keyboard.fill"
+        case .pointer:  return "magicmouse.fill"
+        case .gamepad:  return "gamecontroller.fill"
+        }
     }
 
     var batteryTint: Color {
@@ -34,34 +43,49 @@ struct Accessory: Equatable {
     }
 }
 
-/// Announces accessories as they attach. IOKit's matching notification is the
-/// push channel; the properties are read a beat later because the battery keys
-/// land after the service itself does.
+// MARK: - Watcher
+
+/// Announces accessories as they attach. Two channels, because no single one
+/// sees everything: input devices surface in the IORegistry as HID services,
+/// and headsets only really announce themselves by becoming the audio output.
 ///
-/// ponytail: `AppleDeviceManagementHIDEventService` only, which covers Apple
-/// gear (AirPods, Beats, Magic mouse/keyboard/trackpad). Third-party Bluetooth
-/// audio never publishes it — that needs IOBluetooth plus the
-/// `com.apple.security.device.bluetooth` entitlement, so add it if it matters.
+/// ponytail: audio detection watches the *default output device*, which is what
+/// macOS switches to on connect. A headset connected without taking over output
+/// is missed — listen on `kAudioHardwarePropertyDevices` and diff the list if
+/// that turns out to happen.
 @MainActor
 final class AccessoryWatcher {
     var onConnect: ((Accessory) -> Void)?
 
+    private let battery = BatteryReader()
     private let port = IONotificationPortCreate(kIOMainPortDefault)
     private var iterator: io_iterator_t = 0
     /// The first drain reports everything already attached; that is not news.
     private var primed = false
+    private var lastAudioDevice = AudioDeviceID(0)
+    private var recent: [String: Date] = [:]
+    private static let dedupe: TimeInterval = 5
 
-    /// The service publishes before its battery keys do. Calibration knob: raise
-    /// it if the ring keeps coming up empty on a real pair of AirPods.
+    /// The HID service publishes before its properties settle, and a freshly
+    /// connected peripheral needs a moment before it will answer a GATT read.
+    /// Calibration knob: raise it if names or battery come back empty.
     private static let settle: Duration = .seconds(1.2)
 
     func start() {
+        startHID()
+        startAudio()
+    }
+
+    // MARK: HID — Bluetooth keyboards, mice, trackpads, controllers
+
+    private func startHID() {
         guard let port else { return }
         IONotificationPortSetDispatchQueue(port, .main)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
+        // IOProviderClass matching is subclass-inclusive, so this one dictionary
+        // covers IOHIDUserDevice, AppleUserHIDDevice and the rest of the family.
         IOServiceAddMatchingNotification(
-            port, kIOFirstMatchNotification,
-            IOServiceMatching("AppleDeviceManagementHIDEventService"),
+            port, kIOFirstMatchNotification, IOServiceMatching("IOHIDDevice"),
             { ctx, iter in
                 guard let ctx else { return }
                 MainActor.assumeIsolated {
@@ -81,30 +105,201 @@ final class AccessoryWatcher {
         defer { services.forEach { IOObjectRelease($0) } }
         guard primed else { return }
 
-        for service in services where Self.read(service) != nil {
-            IOObjectRetain(service)
+        for service in services {
+            guard let accessory = Self.readHID(service) else { continue }
+            announce(accessory)
+        }
+    }
+
+    private static func readHID(_ service: io_object_t) -> Accessory? {
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let p = props?.takeRetainedValue() as? [String: Any],
+              // "Bluetooth" and "Bluetooth Low Energy"; everything else is
+              // internal (SPU, FIFO, Audio) or wired.
+              (p["Transport"] as? String)?.hasPrefix("Bluetooth") == true,
+              let name = p["Product"] as? String else { return nil }
+
+        // Usage numbers only mean anything alongside their page: usage 1 is a
+        // Pointer on page 1 but a Consumer Control on page 12, and headsets
+        // publish exactly that for their AVRCP media keys. Only generic desktop
+        // devices are claimed here — anything else, a headset included, is left
+        // to the audio channel, which knows what it actually is.
+        let page = (p["PrimaryUsagePage"] as? Int) ?? 0
+        let usage = (p["PrimaryUsage"] as? Int) ?? 0
+        guard page == kHIDPage_GenericDesktop else { return nil }
+
+        let kind: Accessory.Kind = switch usage {
+        case kHIDUsage_GD_Keyboard, kHIDUsage_GD_Keypad:        .keyboard
+        case kHIDUsage_GD_Mouse, kHIDUsage_GD_Pointer:          .pointer
+        case kHIDUsage_GD_Joystick, kHIDUsage_GD_GamePad:       .gamepad
+        default: return nil
+        }
+        return Accessory(name: name, kind: kind, battery: nil)
+    }
+
+    // MARK: Audio — classic Bluetooth headsets
+
+    private func startAudio() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        lastAudioDevice = Self.defaultOutputDevice()
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, .main
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.audioChanged() }
+        }
+    }
+
+    private func audioChanged() {
+        let device = Self.defaultOutputDevice()
+        guard device != lastAudioDevice else { return }
+        lastAudioDevice = device
+        // Switching back to the built-in speakers is a disconnect, not news.
+        guard Self.isBluetooth(device), let name = Self.name(of: device) else { return }
+        announce(Accessory(name: name, kind: .audio, battery: nil))
+    }
+
+    private static func defaultOutputDevice() -> AudioDeviceID {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        return device
+    }
+
+    private static func isBluetooth(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport = UInt32(0)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
+        return transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    private static func name(of device: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var name: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return nil }
+        return name as String
+    }
+
+    // MARK: Presentation
+
+    private func announce(_ accessory: Accessory) {
+        // One physical device can publish several HID services (a keyboard with
+        // consumer controls, say), and a headset lands on both channels. The
+        // pill should still only appear once for it.
+        let now = Date()
+        recent = recent.filter { now.timeIntervalSince($0.value) < Self.dedupe }
+        guard recent.updateValue(now, forKey: accessory.name) == nil else { return }
+
+        Task {
+            try? await Task.sleep(for: Self.settle)
+            var a = accessory
+            a.battery = await battery.level(for: a.name)
+            onConnect?(a)
+        }
+    }
+}
+
+// MARK: - Battery
+
+/// Reads the GATT Battery Service off a connected BLE peripheral. Classic
+/// Bluetooth headsets report battery over HFP into `bluetoothd`, which has no
+/// public API, so those simply come back nil.
+///
+/// ponytail: one lookup at a time — a second call while the first is in flight
+/// gets nil. Connects are seconds apart in practice; key the continuations by
+/// peripheral identifier if that stops being true.
+@MainActor
+final class BatteryReader: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+    private static let service = CBUUID(string: "180F")
+    private static let level = CBUUID(string: "2A19")
+    private static let timeout: Duration = .seconds(3)
+
+    private lazy var central = CBCentralManager(delegate: self, queue: .main)
+    private var finish: ((Int?) -> Void)?
+    private var powerWaiters: [CheckedContinuation<Bool, Never>] = []
+
+    func level(for name: String) async -> Int? {
+        guard await poweredOn(),
+              let peripheral = central
+                  .retrieveConnectedPeripherals(withServices: [Self.service])
+                  .first(where: { $0.name == name })
+        else { return nil }
+
+        peripheral.delegate = self
+        return await withCheckedContinuation { continuation in
+            var resumed = false
+            let done: (Int?) -> Void = { [weak self] value in
+                guard !resumed else { return }
+                resumed = true
+                self?.finish = nil
+                self?.central.cancelPeripheralConnection(peripheral)
+                continuation.resume(returning: value)
+            }
+            finish = done
+            central.connect(peripheral)
+
+            // A peripheral can accept the connection and then never answer;
+            // without this the pill would wait on it forever.
             Task {
-                try? await Task.sleep(for: Self.settle)
-                defer { IOObjectRelease(service) }
-                if let a = Self.read(service) { self.onConnect?(a) }
+                try? await Task.sleep(for: Self.timeout)
+                done(nil)
             }
         }
     }
 
-    private static func read(_ service: io_object_t) -> Accessory? {
-        var props: Unmanaged<CFMutableDictionary>?
-        guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-              let p = props?.takeRetainedValue() as? [String: Any] else { return nil }
-        // The built-in keyboard and trackpad publish the same service over a
-        // wired transport; only the wireless ones are worth announcing.
-        guard (p["Transport"] as? String)?.caseInsensitiveCompare("bluetooth") == .orderedSame else { return nil }
+    /// Resolves false when Bluetooth is off or the user denied the prompt.
+    private func poweredOn() async -> Bool {
+        switch central.state {
+        case .poweredOn:            return true
+        case .unknown, .resetting:  return await withCheckedContinuation { powerWaiters.append($0) }
+        default:                    return false
+        }
+    }
 
-        // AirPods report each bud separately; the emptier one is the honest
-        // number. The case is a separate thing and stays out of it.
-        let levels = ["BatteryPercent", "BatteryPercentLeft", "BatteryPercentRight"]
-            .compactMap { (p[$0] as? NSNumber)?.intValue }
-            .filter { $0 > 0 }
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central.state != .unknown, central.state != .resetting else { return }
+        let waiters = powerWaiters
+        powerWaiters = []
+        waiters.forEach { $0.resume(returning: central.state == .poweredOn) }
+    }
 
-        return Accessory(name: (p["Product"] as? String) ?? "Accessory", battery: levels.min())
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        peripheral.discoverServices([Self.service])
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        finish?(nil)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard let service = peripheral.services?.first else { finish?(nil); return }
+        peripheral.discoverCharacteristics([Self.level], for: service)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard let characteristic = service.characteristics?.first else { finish?(nil); return }
+        peripheral.readValue(for: characteristic)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        // The Battery Level characteristic is a single byte, 0…100.
+        finish?(characteristic.value?.first.map(Int.init))
     }
 }

@@ -35,6 +35,23 @@ struct NotchMetrics {
     }
 }
 
+/// The Bluetooth rune, drawn rather than looked up: SF Symbols has no glyph for
+/// it. One continuous stroke, exactly as the mark is constructed.
+struct BluetoothMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let x = { (t: CGFloat) in rect.minX + rect.width * t }
+        let y = { (t: CGFloat) in rect.minY + rect.height * t }
+        var path = Path()
+        path.move(to: CGPoint(x: x(0), y: y(0.3)))
+        path.addLine(to: CGPoint(x: x(1), y: y(0.7)))
+        path.addLine(to: CGPoint(x: x(0.5), y: y(1)))
+        path.addLine(to: CGPoint(x: x(0.5), y: y(0)))
+        path.addLine(to: CGPoint(x: x(1), y: y(0.3)))
+        path.addLine(to: CGPoint(x: x(0), y: y(0.7)))
+        return path
+    }
+}
+
 struct NotchView: View {
     let mode: NotchMode
     let metrics: NotchMetrics
@@ -145,8 +162,8 @@ struct NotchView: View {
 
     private var flank: CGFloat { (metrics.pillWidth - metrics.notch.width) / 2 }
 
-    /// Nothing is drawn for a device that never reported a level — an empty
-    /// ring would read as a flat battery.
+    /// A device that never reported a level gets the Bluetooth mark instead —
+    /// an empty ring would read as a flat battery.
     @ViewBuilder private func batteryRing(_ accessory: Accessory) -> some View {
         if let level = accessory.battery {
             ZStack {
@@ -157,6 +174,11 @@ struct NotchView: View {
                     .rotationEffect(.degrees(-90))
             }
             .frame(width: 20, height: 20)
+        } else {
+            BluetoothMark()
+                .stroke(Color(red: 0, green: 0.51, blue: 1),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .frame(width: 11, height: 18)
         }
     }
 

@@ -1,5 +1,7 @@
 # Vitals
 
+@.ai/README.md
+
 ## Building / running
 
 Never run `xcodebuild`, `swift build`, or launch the app. The user builds and

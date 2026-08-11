@@ -53,6 +53,7 @@ Two things drove the design and neither is in the original mockup:
 | Rest | Invisible. Stock notch. | — |
 | Tier 1 | Hairline glow on the notch edge. No motion. | Persistent states |
 | Tier 2 | Pill grows horizontally, symmetric, ~440pt cap, auto-hides | Transient events |
+| Accessory | Narrower pill: glyph in the left flank, battery ring or Bluetooth mark in the right | A Bluetooth accessory connects |
 | Hover | Morphs from the pill's edges, grows down and wider | 250ms dwell inside the notch rect |
 
 Hover requires a dwell delay because the cursor crosses the notch constantly on
@@ -72,6 +73,13 @@ anything a single "watts in" figure can show.
 
 **Stall risk** — memory pressure as a *word*, not a percentage; swap used and
 its trend; sustained CPU as a sparkline; thermal state.
+
+**Accessory** — a Dynamic-Island-style acknowledgement when a Bluetooth
+accessory connects: type glyph on the left, charge on the right.
+
+**Shelf** — a temporary drop box in the hover panel, plus an AirDrop tile.
+Originally a non-goal (see below); built anyway, because a collapsed notch is
+already the place the cursor is when a drag starts.
 
 **Music** — deferred, but the panel's slot model is heterogeneous from day one
 so it can be added without a rewrite. Highest-risk integration in the project:
@@ -100,6 +108,10 @@ Tier 2 — interrupts:
 - Battery reached 100%.
 - Memory pressure critical.
 - Thermal state serious or critical.
+- Bluetooth accessory connected. **A deliberate exception to principle 2**: this
+  one *is* self-caused. It earns its place the way the iOS Dynamic Island does —
+  the acknowledgement is the point, and it carries a charge level you would
+  otherwise dig through Control Center for.
 
 Tier 1 — glows only:
 
@@ -127,8 +139,9 @@ lid-closed, Vitals is invisible.
 - App Store compatibility.
 - Historical data, logging, or post-mortem analysis.
 - Replacing iStat Menus or Stats as a general-purpose monitor.
-- File shelf, AirDrop, HUD replacement, calendar — the surrounding notch-app
-  feature set exists elsewhere and is not the point.
+- HUD replacement and calendar — the rest of the surrounding notch-app feature
+  set exists elsewhere and is not the point. (The file shelf and AirDrop were
+  on this list and got built; they are Modules now.)
 
 ## Open questions
 
@@ -136,3 +149,15 @@ lid-closed, Vitals is invisible.
    Blocks music, blocks nothing else.
 2. Whether the user docks to an external display regularly. If yes, the
    "invisible when docked" decision needs a menu bar fallback.
+
+## Settled, do not re-litigate
+
+**Classic Bluetooth headsets cannot report battery.** Verified on this machine:
+nothing publishes `BatteryPercent` in the IORegistry,
+`/Library/Preferences/com.apple.Bluetooth.plist` has no `DeviceCache` on macOS
+26, and `/Library/Bluetooth/` is `Operation not permitted`. macOS receives the
+level over HFP into `bluetoothd`, which exposes no public API — Control Center
+reads it through the private `BluetoothManager` framework. The GATT Battery
+Service (0x180F) via CoreBluetooth is the only public route and only BLE devices
+answer it. Headsets therefore get the Bluetooth mark, not a ring. This is a
+platform limit, not a missing feature.
