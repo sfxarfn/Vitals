@@ -42,6 +42,11 @@ final class NotchController {
             queue.append(.accessory(accessory))
             presentNext()
         }
+        accessories.onDisconnect = { [weak self] in
+            guard let self else { return }
+            queue.append(.audioLost)
+            presentNext()
+        }
         accessories.start()
 
         NotificationCenter.default.addObserver(
@@ -146,7 +151,8 @@ final class NotchController {
             pressure: s.pressure,
             thermalIndex: [.nominal: 0, .fair: 1, .serious: 2, .critical: 3][s.thermal] ?? 0,
             cpuSustainedSeconds: telemetry.cpuSustainedSeconds,
-            swapGrowthMB: telemetry.swapGrowthMB
+            swapGrowthMB: telemetry.swapGrowthMB,
+            loadFinished: telemetry.loadFinished
         )
 
         queue.append(contentsOf: engine.update(reading).map(NotchMode.event))

@@ -42,10 +42,23 @@ final class Telemetry {
     private(set) var cpuSustainedSeconds: Double = 0
     /// Swap gained over the trailing window, in MB.
     private(set) var swapGrowthMB: Double = 0
+    /// True for the single sample where a long busy stretch has gone quiet — the
+    /// closest thing to "your build finished" without a hook into Xcode.
+    private(set) var loadFinished = false
 
     static let historyLength = 120
     private static let sustainedCPUThreshold = 85.0
     private static let swapWindow: TimeInterval = 300
+
+    /// Calibration knobs for the finished-load heuristic. Idle on this machine
+    /// sits well under 30% with Chrome open; the 10s hold is what stops a build
+    /// pausing between targets from reading as the end of the build.
+    private static let quietCPUThreshold = 30.0
+    private static let quietDuration: TimeInterval = 10
+    private static let sustainedDuration: TimeInterval = 60
+
+    private var cpuQuietSeconds: Double = 0
+    private var sawSustainedLoad = false
 
     private var swapHistory: [(at: Date, mb: Double)] = []
     private var lastCPUTicks: (user: UInt64, sys: UInt64, idle: UInt64, nice: UInt64)?
@@ -201,6 +214,18 @@ final class Telemetry {
         let elapsed = lastCPUSampleAt.map { now.timeIntervalSince($0) } ?? 0
         lastCPUSampleAt = now
         cpuSustainedSeconds = pct >= Self.sustainedCPUThreshold ? cpuSustainedSeconds + elapsed : 0
+        cpuQuietSeconds = pct < Self.quietCPUThreshold ? cpuQuietSeconds + elapsed : 0
+
+        // ponytail: CPU shape, not a build hook — a long render or a Docker
+        // image reads the same as a compile. Watch Xcode's build log or an
+        // XCBBuildService notification if it has to mean specifically "build".
+        //
+        // One-shot: armed by a long busy stretch, spent the moment the machine
+        // goes quiet. Disarming here is what lets the next build fire again
+        // without the engine having to know a build ever happened.
+        if cpuSustainedSeconds >= Self.sustainedDuration { sawSustainedLoad = true }
+        loadFinished = sawSustainedLoad && cpuQuietSeconds >= Self.quietDuration
+        if loadFinished { sawSustainedLoad = false }
 
         return pct
     }

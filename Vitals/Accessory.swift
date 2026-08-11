@@ -56,6 +56,10 @@ struct Accessory: Equatable {
 @MainActor
 final class AccessoryWatcher {
     var onConnect: ((Accessory) -> Void)?
+    /// The headset that *was* the output is gone and sound has fallen back to
+    /// the built-in speakers. Bluetooth → built-in only: swapping between two
+    /// headsets is still a connect, and stays on `onConnect`.
+    var onDisconnect: (() -> Void)?
 
     private let battery = BatteryReader()
     private let port = IONotificationPortCreate(kIOMainPortDefault)
@@ -63,6 +67,9 @@ final class AccessoryWatcher {
     /// The first drain reports everything already attached; that is not news.
     private var primed = false
     private var lastAudioDevice = AudioDeviceID(0)
+    /// By the time the callback runs the old device is already out of CoreAudio,
+    /// so whether it was Bluetooth has to be remembered, not asked.
+    private var lastAudioWasBluetooth = false
     private var recent: [String: Date] = [:]
     private static let dedupe: TimeInterval = 5
 
@@ -129,12 +136,13 @@ final class AccessoryWatcher {
         let usage = (p["PrimaryUsage"] as? Int) ?? 0
         guard page == kHIDPage_GenericDesktop else { return nil }
 
-        let kind: Accessory.Kind = switch usage {
+        let kind: Accessory.Kind? = switch usage {
         case kHIDUsage_GD_Keyboard, kHIDUsage_GD_Keypad:        .keyboard
         case kHIDUsage_GD_Mouse, kHIDUsage_GD_Pointer:          .pointer
         case kHIDUsage_GD_Joystick, kHIDUsage_GD_GamePad:       .gamepad
-        default: return nil
+        default:                                                nil
         }
+        guard let kind else { return nil }
         return Accessory(name: name, kind: kind, battery: nil)
     }
 
@@ -147,6 +155,7 @@ final class AccessoryWatcher {
             mElement: kAudioObjectPropertyElementMain)
 
         lastAudioDevice = Self.defaultOutputDevice()
+        lastAudioWasBluetooth = Self.isBluetooth(lastAudioDevice)
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &address, .main
         ) { [weak self] _, _ in
@@ -157,9 +166,19 @@ final class AccessoryWatcher {
     private func audioChanged() {
         let device = Self.defaultOutputDevice()
         guard device != lastAudioDevice else { return }
+        let wasBluetooth = lastAudioWasBluetooth
         lastAudioDevice = device
-        // Switching back to the built-in speakers is a disconnect, not news.
-        guard Self.isBluetooth(device), let name = Self.name(of: device) else { return }
+        lastAudioWasBluetooth = Self.isBluetooth(device)
+
+        // Dropping off a headset onto the built-in speakers is the event: the
+        // battery died mid-call and you are now talking to the room. Choosing
+        // that switch by hand looks identical from here — CoreAudio reports the
+        // route, not the reason — and the pill is cheap enough to be wrong.
+        guard lastAudioWasBluetooth else {
+            if wasBluetooth { onDisconnect?() }
+            return
+        }
+        guard let name = Self.name(of: device) else { return }
         announce(Accessory(name: name, kind: .audio, battery: nil))
     }
 

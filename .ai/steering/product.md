@@ -54,6 +54,7 @@ Two things drove the design and neither is in the original mockup:
 | Tier 1 | Hairline glow on the notch edge. No motion. | Persistent states |
 | Tier 2 | Pill grows horizontally, symmetric, ~440pt cap, auto-hides | Transient events |
 | Accessory | Narrower pill: glyph in the left flank, battery ring or Bluetooth mark in the right | A Bluetooth accessory connects |
+| Audio lost | Same width as Accessory, two beats: headphones turn over into a red slashed pair, speaker fades up opposite | Bluetooth output falls back to the built-in speakers |
 | Hover | Morphs from the pill's edges, grows down and wider | 250ms dwell inside the notch rect |
 
 Hover requires a dwell delay because the cursor crosses the notch constantly on
@@ -75,7 +76,9 @@ anything a single "watts in" figure can show.
 its trend; sustained CPU as a sparkline; thermal state.
 
 **Accessory** — a Dynamic-Island-style acknowledgement when a Bluetooth
-accessory connects: type glyph on the left, charge on the right.
+accessory connects: type glyph on the left, charge on the right. The same audio
+listener also catches the reverse, when sound drops off a headset back onto the
+built-in speakers.
 
 **Shelf** — a temporary drop box in the hover panel, plus an AirDrop tile.
 Originally a non-goal (see below); built anyway, because a collapsed notch is
@@ -112,6 +115,19 @@ Tier 2 — interrupts:
   one *is* self-caused. It earns its place the way the iOS Dynamic Island does —
   the acknowledgement is the point, and it carries a charge level you would
   otherwise dig through Control Center for.
+- Bluetooth audio lost to the built-in speakers. The headset battery died
+  mid-call and you are now talking to the room. CoreAudio reports the route and
+  not the reason, so choosing the switch by hand fires it too; that miss is
+  cheap next to the one it catches.
+- Memory pressure or thermal state recovered. The all-clear only fires for
+  signals whose alarm actually reached the notch — these are the two states you
+  stop and wait out, so "go back to work" is worth saying. Nothing else gets a
+  recovery; nobody is waiting for the battery to stop being full.
+- Sustained load finished: CPU held above 85% for a minute, then sat under 30%
+  for ten seconds. Self-caused, and a second deliberate exception to principle
+  2 — the whole reason the machine is watched is that builds take long enough
+  to walk away from. It is a CPU shape, not a build hook, so a long render or a
+  Docker image reads the same.
 
 Tier 1 — glows only:
 

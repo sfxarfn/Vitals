@@ -2,8 +2,9 @@ import SwiftUI
 
 enum NotchMode: Equatable {
     case idle
-    case event(Signal)
+    case event(Event)
     case accessory(Accessory)
+    case audioLost
     case expanded
 }
 
@@ -22,7 +23,8 @@ struct NotchMetrics {
         switch mode {
         case .idle:      notch
         case .event:     CGSize(width: pillWidth, height: notch.height)
-        case .accessory: CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
+        case .accessory,
+             .audioLost: CGSize(width: notch.width + accessoryFlank * 2, height: notch.height)
         case .expanded:  CGSize(width: panelWidth, height: notch.height + panelBodyHeight)
         }
     }
@@ -49,6 +51,43 @@ struct BluetoothMark: Shape {
         path.addLine(to: CGPoint(x: x(1), y: y(0.3)))
         path.addLine(to: CGPoint(x: x(0), y: y(0.7)))
         return path
+    }
+}
+
+/// Sound just fell off a headset onto the built-in speakers, told in two beats
+/// inside the notch's two flanks.
+///
+/// Nothing travels between them on purpose: the notch's own width in the middle
+/// is the camera housing, so an icon sliding across it is invisible for most of
+/// the trip and the swap reads as a glitch. The left glyph turns over in place
+/// and the right one fades up instead, which lands as a handoff without either
+/// icon entering dead space. The resting frame it settles into has to carry the
+/// whole message on its own — the pill lives 2.6s and you look up late.
+private struct AudioLostPill: View {
+    let metrics: NotchMetrics
+    @State private var lost = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: lost ? "headphones.slash" : "headphones")
+                .foregroundStyle(lost ? Color.red : .white)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: metrics.accessoryFlank)
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            Image(systemName: "speaker.wave.2.fill")
+                .foregroundStyle(.white)
+                .opacity(lost ? 1 : 0)
+                .frame(width: metrics.accessoryFlank)
+        }
+        .font(.system(size: 17, weight: .medium))
+        .frame(height: metrics.notch.height)
+        .task {
+            // Beat one is the pill arriving with the headset still on it; the
+            // turnover only lands once the shape has finished growing, or the
+            // two animations fight and neither reads.
+            try? await Task.sleep(for: .seconds(0.35))
+            withAnimation(.easeOut(duration: 0.3)) { lost = true }
+        }
     }
 }
 
@@ -112,15 +151,15 @@ struct NotchView: View {
         switch mode {
         case .idle:
             EmptyView()
-        case .event(let signal):
+        case .event(let event):
             // Anything behind the camera housing is invisible, so the pill puts
             // its glyph and label in the two flanks and leaves the middle empty.
             HStack(spacing: 0) {
-                Image(systemName: signal.symbol)
-                    .foregroundStyle(signal.tint)
+                Image(systemName: event.symbol)
+                    .foregroundStyle(event.tint)
                     .frame(width: flank)
                 Spacer(minLength: 0).frame(width: metrics.notch.width)
-                Text(signal.title)
+                Text(event.title)
                     .lineLimit(1).minimumScaleFactor(0.7)
                     .foregroundStyle(.white)
                     .frame(width: flank)
@@ -141,6 +180,8 @@ struct NotchView: View {
             }
             .frame(height: metrics.notch.height)
             .transition(.opacity)
+        case .audioLost:
+            AudioLostPill(metrics: metrics).transition(.opacity)
         case .expanded:
             VStack(spacing: 0) {
                 // Camera housing row — anything under it is invisible, so the
