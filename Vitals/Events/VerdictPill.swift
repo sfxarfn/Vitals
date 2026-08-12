@@ -34,13 +34,16 @@ extension NotchView {
                 // so which kind of ending it was and what ended are two separate
                 // reads.
                 VStack(spacing: 1) {
-                    // One hammer for both endings, at the size and metrics
-                    // `buildIcon` draws Xcode's own icon at — the two flanks are
-                    // a matched pair of glyph-over-word, and swapping the shape
-                    // as well as the colour made them read as two arrangements.
-                    // Colour is the only thing separating a good run from a bad
-                    // one, which is the one difference worth carrying.
-                    Image(systemName: "hammer.fill")
+                    // Two circles, same size and same metrics `buildIcon` draws
+                    // Xcode's own icon at, so the flanks stay a matched pair —
+                    // but the mark inside them differs, because colour on its
+                    // own is the wrong channel for this. The pill lives 2.6s in
+                    // the corner of your eye, where shape resolves and hue does
+                    // not, and the word underneath scales to 5pt before it gives
+                    // up. A hammer for both would have left the two endings
+                    // separated by nothing you can see from there.
+                    Image(systemName: ending == .succeeded ? "checkmark.circle.fill"
+                                                           : "xmark.circle.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(ending == .succeeded ? Color.green : .red)
                         .frame(height: 20)
