@@ -30,9 +30,15 @@ is in git history: `git show d02f2ba:.ai/steering/product.md`.
 
 | Path | What it holds |
 |---|---|
+| [`../README.md`](../README.md) | The user-facing installation, command setup, and uninstallation guide for moving a known-good `Vitals.app` to another Mac. |
 | [`steering/product.md`](steering/product.md) | What Vitals is and what the notch says. Every state it can take, in three categories — **Interactions**, **Events**, **Activities** — plus Idle as the floor and Glow as the residue an Event leaves behind. |
 | [`steering/design.md`](steering/design.md) | How the notch looks and moves: shape, flank layout, how width is bought, which states may grow vertically, and the grow/shrink rule. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Build rules. Short version: never run `xcodebuild` or `swift build`, never launch the app — the user does that in Xcode. Make the edit, say what to look for, stop. |
+
+The main [`README.md`](../README.md) is the canonical installation guide. Any
+change to Vitals' requirements, installation process, command installation,
+permissions, updating, or uninstallation must update that file in the same
+change.
 
 ## Code map
 
