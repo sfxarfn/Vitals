@@ -55,10 +55,12 @@ extension NotchView {
                         .lineLimit(1).minimumScaleFactor(0.6)
                         .foregroundStyle(.white)
                 }
-                // Centred like the left, now that the two flanks hold the same
-                // shape at the same size: a matched pair sits evenly set, and
-                // pinning either one against the housing is what would make the
-                // outer gaps disagree.
+                // Centred like the left, then pulled two points back toward the
+                // housing. The two stacks measure the same but do not weigh the
+                // same: Xcode's icon is a filled colour square and this is a
+                // thin ring, so centring both leaves the lighter side reading as
+                // if it had drifted outward. Two points is what settles it.
+                .offset(x: -2)
                 .flankSlot(metrics.verdictFlanks.right, .trailing, pad: metrics.notchPad, centered: true)
             }
             .frame(height: metrics.notch.height)

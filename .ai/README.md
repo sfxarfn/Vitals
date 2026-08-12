@@ -87,9 +87,9 @@ accessory-policy app, the Settings scene, and the debug self-checks.
   every layout puts content in the two flanks and leaves the middle empty. Each
   flank hugs the notch and the slack falls outward, unless it asks to be
   centred — `flankSlot` is the only place that decides either, so nothing lays
-  out a flank by hand. Optical corrections to the *glyph* — a fixed box, a
-  rotation, a point of offset — are not that: they live in the content, above
-  the `flankSlot` call, and `design.md` lists them as the third lever.
+  out a flank by hand. Optical corrections to what a flank *holds* — a fixed
+  box, a rotation, a point of offset — are not that: they live in the content,
+  above the `flankSlot` call, and `design.md` lists them as the third lever.
 - **`Signal` is closed to `product.md`'s Event list.** A reading the notch never
   says anything about is not a Signal — it was sampled, thresholded and thrown
   away, and five of those were deleted once. Add the doc entry first, then the

@@ -34,8 +34,10 @@ How the notch looks and moves. What it says is [`product.md`](product.md).
     let the slack fall outward. The default.
   - **Centre** — split the slack, half against each edge.
   - **Optical correction inside the content** — a fixed box, a rotation, a point
-    or two of offset, applied to the glyph rather than to the flank. For ink that
-    does not sit where its bounding box says it does.
+    or two of offset, applied to what the flank holds rather than to the flank
+    itself. For ink that does not sit, or does not weigh, what its bounding box
+    says: a wide glyph whose terminal is drawn into its own padding, or a thin
+    ring opposite a filled icon of the same measured size.
 - A flank doing anything other than plain hugging carries one line in the code
   naming what it is balanced against. Without that line the next reader cannot
   tell a calibrated number from a stray one.

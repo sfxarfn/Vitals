@@ -50,26 +50,25 @@ extension NotchView {
     /// live number on the right, camera housing in between. A number says more
     /// than the word would and costs half the room.
     ///
-    /// The glyph is the one flank in the app that is centred rather than pinned.
-    /// It is a bolt or a battery against "100%" — hugging both edges would leave
-    /// the glyph with two or three times the outer gap the number has, and the
-    /// pill reads as leaning even though it is symmetric.
+    /// The glyph flank is the one place in the app where two states in the same
+    /// family are placed differently, because the two glyphs are not comparable:
+    /// `battery.100percent.bolt` is ~29pt of ink and `bolt.fill` about 10, in the
+    /// same 40pt slot. One placement cannot serve both — the wide one wants the
+    /// housing, and the narrow one pinned there looks shoved into it.
     func compactPill(_ event: Event) -> some View {
-        HStack(spacing: 0) {
+        let flush = event.signal == .charged
+        return HStack(spacing: 0) {
             Image(systemName: event.symbol)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(event.tint)
-                // Two points inward, on top of the centring. `battery.100percent.bolt`
-                // is a wide horizontal glyph whose ink sits left of the box it
-                // is centred in — the terminal nub on its right end is drawn
-                // into the glyph's own padding — so geometric centre reads as
-                // sitting slightly outward. Optical, not layout: the slot is
-                // fixed and the glyph never fills it.
-                //
-                // Calibration knob. It rides along on the bolt, which is narrow
-                // enough that two points is inside the noise.
-                .offset(x: 2)
-                .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad, centered: true)
+                // Charged goes flush: the battery is nearly as wide as its slot,
+                // and its terminal nub is drawn inside its own padding, so it
+                // reads further out than it measures. Charging stays centred and
+                // comes in two points — the bolt is narrow enough that the
+                // housing would swallow it, and its ink sits left of its box.
+                .offset(x: flush ? 0 : 2)
+                .flankSlot(metrics.glyphFlank, .leading,
+                           pad: flush ? 0 : metrics.notchPad, centered: !flush)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
             Text(compactValue(event))
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -98,13 +97,21 @@ extension NotchView {
     /// the camera housing owns the middle, so the glyph and the level take a
     /// side each.
     func accessoryPill(_ accessory: Accessory) -> some View {
-        HStack(spacing: 0) {
+        // The far flank holds one of two things that are nothing alike: a 20pt
+        // ring, or the 11pt Bluetooth mark that stands in when there is no level
+        // to draw. The ring is close enough to the accessory glyph opposite to
+        // hug like it does. The mark is half its width, and pinned to the same
+        // edge it reads as having slid inward and left the flank empty behind
+        // it — so it centres and lets the slack fall on both sides.
+        let mark = accessory.battery == nil
+        return HStack(spacing: 0) {
             Image(systemName: accessory.symbol)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.white)
                 .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
-            batteryRing(accessory).flankSlot(metrics.glyphFlank, .trailing, pad: metrics.notchPad)
+            batteryRing(accessory)
+                .flankSlot(metrics.glyphFlank, .trailing, pad: metrics.notchPad, centered: mark)
         }
         .frame(height: metrics.notch.height)
     }
