@@ -17,39 +17,38 @@ enum Side { case center, left, right }
 struct Reading {
     var percent = 0
     var onAC = false
+    /// Signed: positive is current going into the pack, negative is coming out.
     var batteryWatts = 0.0
-    var pressure: Int32 = 1
     /// Die temperature, or 0 on a machine whose sensor tree we cannot read —
     /// which sits under every thermal threshold, so a missing sensor is silent.
     var dieTempC = 0.0
     var cpuSustainedSeconds = 0.0
-    var swapGrowthMB = 0.0
     var loadFinished = false
 }
 
-/// Everything the machine can say about itself, by the subsystems `product.md`
-/// groups Events under. `loudness` says whether a signal earns a pill or only an
-/// edge; `side` says which edge.
+/// Everything the machine can say about itself, one case per Event `product.md`
+/// lists under Power, Thermal and CPU. The other two subsystems it lists —
+/// Connections and Xcode — do not read off telemetry, so they arrive as their
+/// own `NotchState` rather than through here.
+///
+/// `loudness` says whether a signal earns a pill or only an edge; `side` says
+/// which edge.
 enum Signal: String, CaseIterable {
     // Power.
-    case netNegativeOnAC, charged, chargerDisconnected
+    case chargingStarted, charged
     // Thermal — one ladder, warm from 80° and hot from 85°.
     case thermalWarm, thermalSerious
     // CPU: the load going up, and the load letting go.
     case cpuSustained, loadFinished
-    // Memory. Not in `product.md`'s Event list — the pill still fires.
-    case pressureWarn, pressureCritical, swapGrowth
 
-    /// Only the crossings you can act on are worth a pill. The rest hold too
-    /// long to interrupt for and light an edge instead — though three of them
-    /// (`chargerDisconnected`, `pressureWarn`, `swapGrowth`) light nothing
-    /// today, because there are two edges and heat and load already own them.
+    /// Only the crossings you can act on are worth a pill. The two Cautions hold
+    /// for as long as the work does, which is far too long to interrupt for, so
+    /// they light their edge instead and say nothing.
     var loudness: Loudness {
         switch self {
-        case .netNegativeOnAC, .charged, .loadFinished,
-             .pressureCritical, .thermalSerious: .pill
-        case .chargerDisconnected, .pressureWarn, .cpuSustained,
-             .swapGrowth, .thermalWarm: .glow
+        case .chargingStarted, .charged,
+             .thermalSerious, .loadFinished:  .pill
+        case .thermalWarm, .cpuSustained:     .glow
         }
     }
 
@@ -59,13 +58,12 @@ enum Signal: String, CaseIterable {
     /// hysteresis, which is fine for signals the OS already debounces.
     var thresholds: (assertAbove: Double, clearBelow: Double) {
         switch self {
-        // 3W, not a hair over zero: a battery held at full idles around 1W and
-        // the reading wanders either side of it. Below this it is a rounding
-        // error, not an adapter losing the fight.
-        case .netNegativeOnAC:      (3, 1)
+        // 3W, not a hair over zero: the reading wanders either side of idle by a
+        // watt or so, and the hysteresis is what makes unplugging the thing that
+        // clears this — so plugging back in is a fresh crossing and fires again.
+        case .chargingStarted:      (3, 1)
         case .charged:              (99.5, 98)
         case .loadFinished:         (0.5, 0.5)
-        case .pressureCritical:     (3, 3)
         // Degrees off the hottest die sensor, in one ladder: warm at 80, hot at
         // 85, back to warm under 75, and all the way to green under 60. The
         // clear-below numbers are what stop a build oscillating around a single
@@ -77,31 +75,29 @@ enum Signal: String, CaseIterable {
         // as "65°" in orange next to a rule that says 65 is green reads as a bug.
         // Clear where the displayed number clears.
         case .thermalWarm:          (80, 65.5)
-        case .chargerDisconnected:  (0.5, 0.5)
-        case .pressureWarn:         (1.5, 1.5)
         case .cpuSustained:         (60, 30)
-        case .swapGrowth:           (500, 200)
         }
     }
 
     func value(_ r: Reading) -> Double {
         switch self {
-        // Silent at full. A pack held at 100% is deliberately cycled off the
-        // adapter and topped back up every few minutes — `pmset -g log` shows
-        // AC and Batt alternating seconds apart with nothing else changing —
-        // and each of those dips is a real discharge that means nothing. The
-        // signal is about an adapter losing to the load, which is a question
-        // that only exists while there is still charging left to lose.
-        case .netNegativeOnAC:      r.onAC && r.percent < 100 ? -r.batteryWatts : 0
+        // Watts into the pack, which is the half `isCharging` cannot answer:
+        // that flag reads true for an adapter merely running the machine, and
+        // false right through the negotiation where current does start flowing.
+        //
+        // Silent near full. A pack held at 100% is deliberately cycled off the
+        // adapter and topped back up every few minutes — `pmset -g log` shows AC
+        // and Batt alternating seconds apart with nothing else changing — and
+        // each of those pulses is real current going in that means nothing. 95 is
+        // where the rest of the app already stops calling a pack "charging".
+        case .chargingStarted:      r.onAC && r.percent < 95 ? r.batteryWatts : 0
+        // The percentage alone: a pack only climbs to full on the adapter, so
+        // the "running on the adapter" half of the Event comes free.
         case .charged:              Double(r.percent)
         case .loadFinished:         r.loadFinished ? 1 : 0
-        case .pressureCritical,
-             .pressureWarn:         Double(r.pressure)
         case .thermalSerious,
              .thermalWarm:          r.dieTempC
-        case .chargerDisconnected:  r.onAC ? 0 : 1
         case .cpuSustained:         r.cpuSustainedSeconds
-        case .swapGrowth:           r.swapGrowthMB
         }
     }
 
@@ -109,42 +105,35 @@ enum Signal: String, CaseIterable {
 
     var symbol: String {
         switch self {
-        case .netNegativeOnAC:      "exclamationmark.triangle.fill"
+        case .chargingStarted:      "bolt.fill"
         case .charged:              "battery.100percent.bolt"
         case .loadFinished:         "checkmark.circle.fill"
-        case .pressureCritical:     "memorychip.fill"
         case .thermalSerious:       "thermometer.high"
         case .thermalWarm:          "thermometer.medium"
-        case .chargerDisconnected:  "powerplug"
-        case .pressureWarn:         "memorychip"
         case .cpuSustained:         "cpu"
-        case .swapGrowth:           "arrow.down.doc"
         }
     }
 
     var title: String {
         switch self {
-        case .netNegativeOnAC:      "Draining on AC"
+        case .chargingStarted:      "Charging"
         case .charged:              "Charged"
         case .loadFinished:         "Load finished"
-        case .pressureCritical:     "Memory critical"
         case .thermalSerious:       "Running hot"
         case .thermalWarm:          "Warm"
-        case .chargerDisconnected:  "Unplugged"
-        case .pressureWarn:         "Memory pressure"
         case .cpuSustained:         "CPU pegged"
-        case .swapGrowth:           "Swapping"
         }
     }
 
     var tint: Color {
         switch self {
-        case .charged, .loadFinished:               .green
-        case .pressureCritical, .netNegativeOnAC,
-             .thermalSerious:                       .red
-        case .thermalWarm, .pressureWarn,
-             .cpuSustained, .swapGrowth:            .orange
-        case .chargerDisconnected:                  .yellow
+        // Charging is amber and full is green, the way a charge indicator has
+        // read since long before this app: the colour is the state of the pack,
+        // not a severity, so it does not share the Cautions' meaning of orange.
+        case .chargingStarted:              .orange
+        case .charged, .loadFinished:       .green
+        case .thermalSerious:               .red
+        case .thermalWarm, .cpuSustained:   .orange
         }
     }
 
@@ -162,7 +151,7 @@ enum Signal: String, CaseIterable {
     /// carries more than the word would ("48°", not "Cooled down").
     var isCompact: Bool {
         switch self {
-        case .charged: true
+        case .chargingStarted, .charged: true
         default: false
         }
     }
@@ -171,28 +160,23 @@ enum Signal: String, CaseIterable {
     /// across the two flanks. A one-sided pill has only one thing to say — a
     /// glyph and at most one number — so a symmetric shape would spend the far
     /// flank on nothing and the notch sliding both ways would read louder than
-    /// the news is. Side is identity, not decoration: thermal always arrives on
-    /// the left and stays there through its own all-clear, so a glance at which
-    /// edge moved already says which subsystem is talking.
+    /// the news is. Side is identity, not decoration: heat is always the left
+    /// edge and load always the right, glow included, so a glance at which edge
+    /// moved already says which subsystem is talking.
     var side: Side {
         switch self {
-        case .loadFinished:   .right
-        case .thermalSerious: .left
-        default:              .center
+        case .thermalWarm, .thermalSerious: .left
+        case .cpuSustained, .loadFinished:  .right
+        case .chargingStarted, .charged:    .center
         }
     }
 
     // MARK: Recovery
 
-    /// Whether clearing deserves a pill of its own. Only the two stall states
-    /// qualify: they are the ones you stop and wait out, so "you can go back to
-    /// work" is news. Nobody is waiting for the battery to stop being full.
-    var announcesRecovery: Bool {
-        switch self {
-        case .pressureCritical, .thermalSerious: true
-        default: false
-        }
-    }
+    /// Whether clearing deserves a pill of its own. Only heat qualifies: it is
+    /// the one you stop and wait out, so "you can go back to work" is news.
+    /// Nobody is waiting for the battery to stop being full.
+    var announcesRecovery: Bool { self == .thermalSerious }
 
     /// Which signal's clear actually means "go back to work". Usually its own,
     /// but thermal hands its all-clear down a rung: red falling to orange at 75°
@@ -207,17 +191,15 @@ enum Signal: String, CaseIterable {
 
     var recoverySymbol: String {
         switch self {
-        case .pressureCritical: "memorychip"
-        case .thermalSerious:   "thermometer.low"
-        default:                symbol
+        case .thermalSerious: "thermometer.low"
+        default:              symbol
         }
     }
 
     var recoveryTitle: String {
         switch self {
-        case .pressureCritical: "Memory clear"
-        case .thermalSerious:   "Cooled down"
-        default:                title
+        case .thermalSerious: "Cooled down"
+        default:              title
         }
     }
 }
@@ -321,39 +303,59 @@ enum EventEngineSelfCheck {
     static func run() {
         let t0 = Date()
 
+        // MARK: Priming
+
         // Launching into a state announces nothing, and having seen it, does not
         // announce it later either. This is what stops a relaunch at 100% on the
         // charger from firing "Charged" every single time.
         var b = EventEngine()
-        let full = Reading(percent: 100, onAC: true, pressure: 4, dieTempC: 90)
+        let full = Reading(percent: 100, dieTempC: 90)
         assert(b.update(full, now: t0).isEmpty, "the first reading is a baseline, not news")
         assert(b.update(full, now: t0.addingTimeInterval(EventEngine.cooldown + 1)).isEmpty,
                "baseline must seed `active`, or the next tick reads as a crossing")
 
+        // MARK: Assert, hold, cool down
+
         var e = primed()
+        var r = Reading(percent: 100)
+        assert(e.update(r, now: t0) == [Event(signal: .charged)])
+        assert(e.update(r, now: t0.addingTimeInterval(1)).isEmpty, "must not re-fire while held")
 
-        // Asserts once, does not re-fire while held.
-        var r = Reading(pressure: 4)
-        assert(e.update(r, now: t0) == [Event(signal: .pressureCritical)])
-        assert(e.update(r, now: t0.addingTimeInterval(1)).isEmpty)
+        // Clearing a signal that does not announce its recovery is silent.
+        r.percent = 50
+        assert(e.update(r, now: t0.addingTimeInterval(2)).isEmpty)
 
-        // Clearing announces the all-clear, exactly once.
-        r.pressure = 1
-        assert(e.update(r, now: t0.addingTimeInterval(2)) == [Event(signal: .pressureCritical, recovered: true)])
-        assert(e.update(r, now: t0.addingTimeInterval(3)).isEmpty)
+        // Re-asserting inside the cooldown stays silent; past it, it fires again.
+        r.percent = 100
+        assert(e.update(r, now: t0.addingTimeInterval(3)).isEmpty, "cooldown must suppress re-fire")
+        r.percent = 50
+        _ = e.update(r, now: t0.addingTimeInterval(4))
+        r.percent = 100
+        assert(e.update(r, now: t0.addingTimeInterval(EventEngine.cooldown + 1)) == [Event(signal: .charged)])
 
-        // Re-asserting inside the cooldown stays silent — and so does the
-        // recovery behind it, since no pill ever appeared to recover from.
-        r.pressure = 4
-        assert(e.update(r, now: t0.addingTimeInterval(4)).isEmpty, "cooldown must suppress re-fire")
-        r.pressure = 1
-        assert(e.update(r, now: t0.addingTimeInterval(5)).isEmpty, "no all-clear for a pill that never showed")
+        // MARK: Charging
 
-        // Past the cooldown it may fire again.
-        r.pressure = 4
-        assert(e.update(r, now: t0.addingTimeInterval(EventEngine.cooldown + 1)) == [Event(signal: .pressureCritical)])
+        // Current into the pack only counts plugged in — off the adapter the
+        // same magnitude is the machine draining it.
+        var c = primed()
+        assert(c.update(Reading(percent: 40, onAC: false, batteryWatts: 8), now: t0).isEmpty)
+        assert(c.update(Reading(percent: 40, onAC: true, batteryWatts: 8), now: t0)
+               == [Event(signal: .chargingStarted)])
 
-        // Hysteresis: CPU sustained holds between 30s and 60s.
+        // Unplugging is what clears it, so plugging back in is news again.
+        _ = c.update(Reading(percent: 42, onAC: false, batteryWatts: -8), now: t0.addingTimeInterval(1))
+        assert(c.update(Reading(percent: 42, onAC: true, batteryWatts: 8),
+                        now: t0.addingTimeInterval(EventEngine.cooldown + 1))
+               == [Event(signal: .chargingStarted)])
+
+        // The top-off pulses of a hold at full are real current that means
+        // nothing. This is the phantom the gate near full exists to swallow.
+        var t = primed()
+        assert(t.update(Reading(percent: 99, onAC: true, batteryWatts: 8), now: t0).isEmpty)
+
+        // MARK: Hysteresis
+
+        // CPU sustained holds between 30s and 60s.
         var h = primed()
         assert(h.update(Reading(cpuSustainedSeconds: 61), now: t0) == [])          // glow only, never fires
         assert(h.active.contains(.cpuSustained))
@@ -366,8 +368,10 @@ enum EventEngineSelfCheck {
         _ = h.update(Reading(cpuSustainedSeconds: 61), now: t0)
         assert(h.update(Reading(cpuSustainedSeconds: 0), now: t0).isEmpty)
 
-        // The left edge walks the ladder: dark, orange at 80, red at 85, and
-        // back down through orange before it goes out under 60.
+        // MARK: The thermal ladder
+
+        // The left edge walks it: dark, orange at 80, red at 85, and back down
+        // through orange before it goes out under 60.
         var g = primed()
         _ = g.update(Reading(dieTempC: 78), now: t0)
         assert(g.thermalGlow == nil, "78° is not warm yet")
@@ -389,27 +393,24 @@ enum EventEngineSelfCheck {
         assert(g.thermalGlow == nil)
         assert(g.update(Reading(dieTempC: 55), now: t0).isEmpty)
 
+        // A whole ladder walked inside the cooldown is silent both ways: the
+        // pill is suppressed, and so is the all-clear behind it, since there was
+        // never a pill to recover from.
+        assert(g.update(Reading(dieTempC: 87), now: t0.addingTimeInterval(1)).isEmpty,
+               "cooldown must suppress re-fire")
+        assert(g.update(Reading(dieTempC: 55), now: t0.addingTimeInterval(2)).isEmpty,
+               "no all-clear for a pill that never showed")
+
         // A machine with no readable sensor reports 0°, which must stay dark
         // rather than reading as ice-cold-and-fine on a warm die.
         var n = primed()
         _ = n.update(Reading(), now: t0)
         assert(n.thermalGlow == nil)
 
-        // Draining on AC only counts while plugged in.
-        var d = primed()
-        assert(d.update(Reading(onAC: false, batteryWatts: -12), now: t0).isEmpty)
-        assert(d.update(Reading(onAC: true, batteryWatts: -12), now: t0) == [Event(signal: .netNegativeOnAC)])
+        // MARK: One-shots
 
-        // ...and only below full: the top-off cycle at 100% discharges the pack
-        // on purpose, which is the phantom this gate exists to swallow.
-        // (`charged` fires on this same reading, so check for the absence of the
-        // one signal rather than an empty list.)
-        var f = primed()
-        assert(!f.update(Reading(percent: 100, onAC: true, batteryWatts: -12), now: t0)
-            .contains(Event(signal: .netNegativeOnAC)))
-
-        // Load finished arrives as a one-shot: Telemetry raises it for a single
-        // sample, so the engine must fire on that sample and then go quiet.
+        // Load finished arrives as one: Telemetry raises it for a single sample,
+        // so the engine must fire on that sample and then go quiet.
         var l = primed()
         assert(l.update(Reading(loadFinished: true), now: t0) == [Event(signal: .loadFinished)])
         assert(l.update(Reading(loadFinished: false), now: t0.addingTimeInterval(1)).isEmpty)

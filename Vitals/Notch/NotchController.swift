@@ -71,6 +71,14 @@ final class NotchController {
             guard let self, atRest else { return }
             state = resting
         }
+        // How it *ended* is an Event, and queues like the rest of them. No
+        // cooldown: that exists for a threshold flapping around its edge, and a
+        // build ends once. Suppressing the second one would be dropping news.
+        builds.onVerdict = { [weak self] finished in
+            guard let self else { return }
+            queue.append(.verdict(finished))
+            presentNext()
+        }
         builds.start()
 
         NotificationCenter.default.addObserver(
@@ -168,15 +176,12 @@ final class NotchController {
     // MARK: Telemetry → Events
 
     private func evaluate() {
-        let p = telemetry.power, s = telemetry.stall
         let reading = Reading(
-            percent: p.percent,
-            onAC: p.onAC,
-            batteryWatts: p.batteryWatts,
-            pressure: s.pressure,
-            dieTempC: s.tempC ?? 0,
+            percent: telemetry.power.percent,
+            onAC: telemetry.power.onAC,
+            batteryWatts: telemetry.power.batteryWatts,
+            dieTempC: telemetry.stall.tempC ?? 0,
             cpuSustainedSeconds: telemetry.cpuSustainedSeconds,
-            swapGrowthMB: telemetry.swapGrowthMB,
             loadFinished: telemetry.loadFinished
         )
 
@@ -300,24 +305,41 @@ final class NotchController {
     var buildAccess: Bool { builds.trusted }
     func requestBuildAccess() { builds.requestAccess() }
 
-    // MARK: Demo
+    // MARK: Previews
 
-    /// Every state the notch can show, one entry each, so a layout change can be
-    /// eyeballed without waiting on the hardware to misbehave. Glow-only signals
-    /// are absent on purpose: they light an edge for as long as they hold rather
-    /// than presenting, so there is nothing to fire.
-    static let previews: [(label: String, state: NotchState)] =
-        Signal.allCases.filter { $0.loudness == .pill }
-            .map { ($0.title, .event(Event(signal: $0))) }
-        + Signal.allCases.filter(\.announcesRecovery)
-            .map { ($0.recoveryTitle, .event(Event(signal: $0, recovered: true))) }
-        + [("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
-           // No level reported — the flank falls back to the Bluetooth mark.
-           ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
-           ("Audio lost", .audioLost),
-           ("Building", .building(buildPreview("Building", nil))),
-           ("Build canceled", .building(buildPreview("Canceled", .canceled))),
-           ("Archive succeeded", .building(buildPreview("Archived", .succeeded)))]
+    typealias Preview = (label: String, state: NotchState)
+
+    /// Every state the notch can show, under the subsystem `product.md` files it
+    /// under, so a layout change can be eyeballed without waiting on the hardware
+    /// to misbehave. Settings draws one section per group.
+    ///
+    /// Glow-only signals are absent on purpose: they light an edge for as long as
+    /// they hold rather than presenting, so there is nothing to fire. So are the
+    /// Interactions — hovering the notch is already the way to see those.
+    static let previews: [(group: String, previews: [Preview])] = [
+        ("Power",   [pill(.chargingStarted), pill(.charged)]),
+        ("Thermal", [pill(.thermalSerious), allClear(.thermalSerious)]),
+        ("CPU",     [pill(.loadFinished)]),
+        ("Connections", [
+            ("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
+            // No level reported — the flank falls back to the Bluetooth mark.
+            ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
+            ("Audio lost", .audioLost),
+        ]),
+        ("Xcode", [
+            ("Build in progress", .building(buildPreview("Building", nil))),
+            ("Build failed", .verdict(buildPreview("Failed", .failed))),
+            ("Build succeeded", .verdict(buildPreview("Success", .succeeded))),
+        ]),
+    ]
+
+    private static func pill(_ signal: Signal) -> Preview {
+        (signal.title, .event(Event(signal: signal)))
+    }
+
+    private static func allClear(_ signal: Signal) -> Preview {
+        (signal.recoveryTitle, .event(Event(signal: signal, recovered: true)))
+    }
 
     private static func buildPreview(_ label: String, _ ending: BuildProgress.Ending?) -> BuildProgress {
         BuildProgress(label: label, done: 3019, total: 6766,
@@ -389,7 +411,9 @@ final class NotchController {
             // Whichever shape is on screen is the region to stay inside; peek is
             // a good deal smaller than the panel.
             let grown = metrics.size(for: state)
-            let rect = CGRect(x: screen.frame.midX - grown.width / 2,
+            // Uneven flanks slide the shape off the notch's centre, so the
+            // region to stay inside slides with it — see `NotchMetrics.lean`.
+            let rect = CGRect(x: screen.frame.midX - grown.width / 2 + metrics.lean(for: state),
                               y: screen.frame.maxY - grown.height,
                               width: grown.width, height: grown.height)
             // Straying outside mid-drag must not slam the shelf shut with the

@@ -9,6 +9,18 @@ import SwiftUI
 /// from that flag alone.
 extension NotchView {
 
+    /// The pack as a short value, for the flanks that have room for one and
+    /// nothing else. A pack at the top says so in a word: "100%" is a
+    /// measurement, and at the ceiling there is nothing left to measure — the
+    /// only thing worth reading is that it is done. Every other level is a
+    /// number, because that is the half you are actually watching move.
+    ///
+    /// Lives here with the rest of the battery wording so a pill and a hover
+    /// cannot end up calling the same pack two different things.
+    var batteryValue: String {
+        telemetry.power.percent >= 100 ? "Full" : "\(telemetry.power.percent)%"
+    }
+
     // MARK: Peek's summary
 
     var batteryStatus: some View {
@@ -48,7 +60,7 @@ extension NotchView {
     /// leaves open.
     private var chargeDetail: String {
         let p = telemetry.power
-        guard p.onAC else { return p.minutesToEmpty.map(duration) ?? "\(p.percent)%" }
+        guard p.onAC else { return p.minutesToEmpty.map(duration) ?? batteryValue }
         // A full pack means nothing is flowing into it — the wattage stops being
         // the story and the adapter is simply running the machine.
         guard p.percent < 95, let rated = p.adapterWatts else { return "Using Direct Power" }

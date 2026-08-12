@@ -54,27 +54,22 @@ struct NotchView: View {
         case .sided(let l, let r):  l != nil && r != nil ? 10 : (l != nil ? 9 : 8)
         case .accessory:            3
         case .audioLost:            4
+        // The verdict is narrower than the counter it follows, so it is its own
+        // shape — sharing the key would swap the content without the shrink.
+        case .verdict:              11
         case .building:             5
         case .peek:                 6
         case .panel:                7
         }
     }
 
-    /// Every other state is centred on the notch and flares both ways. A pill
-    /// growing out of one edge only pins the edge it is not growing from, so the
-    /// box slides half its own overhang the other way. Interpolates with the
-    /// width under the same growth, which is what makes it read as growing
-    /// sideways rather than growing and then sliding. Both sides live means the
-    /// shape is symmetric again, so it recentres as the second one arrives.
-    private var xOffset: CGFloat {
-        guard case .sided(let left, let right) = state else { return 0 }
-        let overhang = (size.width - metrics.notch.width) / 2
-        switch (left, right) {
-        case (.some, .none): return -overhang
-        case (.none, .some): return overhang
-        default:             return 0
-        }
-    }
+    /// A state that buys more on one side than the other has to slide, or the
+    /// extra width would push the camera housing off the notch. Half the
+    /// difference, which is zero for every symmetric state. Interpolates with
+    /// the width under the same growth, which is what makes a one-sided pill
+    /// read as growing sideways rather than growing and then sliding — and what
+    /// recentres the shape as a second side arrives.
+    private var xOffset: CGFloat { metrics.lean(for: state) }
 
     private var shape: NotchShape {
         NotchShape(topCornerRadius: topRadius,
@@ -177,6 +172,8 @@ struct NotchView: View {
             accessoryPill(accessory).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .audioLost:
             audioLostPill.transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .verdict(let build):
+            verdictPill(build).transition(.opacity.animation(.easeOut(duration: 0.2)))
 
         // Activity.
         case .building(let build):

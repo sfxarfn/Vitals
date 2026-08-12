@@ -66,12 +66,27 @@ extension NotchView {
     /// Same two-flank shape as the accessory pill: tinted glyph on the left, a
     /// live number on the right, camera housing in between. A number says more
     /// than the word would and costs half the room.
+    ///
+    /// The glyph is the one flank in the app that is centred rather than pinned.
+    /// It is a bolt or a battery against "100%" — hugging both edges would leave
+    /// the glyph with two or three times the outer gap the number has, and the
+    /// pill reads as leaning even though it is symmetric.
     func compactPill(_ event: Event) -> some View {
         HStack(spacing: 0) {
             Image(systemName: event.symbol)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(event.tint)
-                .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad)
+                // Two points inward, on top of the centring. `battery.100percent.bolt`
+                // is a wide horizontal glyph whose ink sits left of the box it
+                // is centred in — the terminal nub on its right end is drawn
+                // into the glyph's own padding — so geometric centre reads as
+                // sitting slightly outward. Optical, not layout: the slot is
+                // fixed and the glyph never fills it.
+                //
+                // Calibration knob. It rides along on the bolt, which is narrow
+                // enough that two points is inside the noise.
+                .offset(x: 2)
+                .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad, centered: true)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
             Text(compactValue(event))
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -90,7 +105,7 @@ extension NotchView {
         case .thermalSerious:
             telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? event.title
         default:
-            "\(telemetry.power.percent)%"
+            batteryValue
         }
     }
 

@@ -5,11 +5,12 @@ import SwiftUI
 /// why it stays one row tall and never grows the notch while you work.
 extension NotchView {
 
-    // MARK: Build in progress
-
     /// One row, both flanks stacked: what is running on the left, how far in on
     /// the right. Everything shrinks to fit the notch's own height rather than
     /// growing the pill for the length of a build.
+    ///
+    /// How the run *ended* is not drawn here — that is an Event, and it lives in
+    /// `VerdictPill.swift` with the rest of them.
     func buildPill(_ build: BuildProgress) -> some View {
         HStack(spacing: 0) {
             VStack(spacing: 1) {
@@ -19,48 +20,48 @@ extension NotchView {
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .foregroundStyle(.white.opacity(0.85))
             }
-            .flankSlot(metrics.wideFlank, .leading, pad: metrics.notchPad)
+            // Centred like the verdict's, and for the same reason: the counter
+            // and its ring opposite are wider than a verb, so hugging both
+            // leaves this side with the bigger outer gap.
+            .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad, centered: true)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
-            // A finished run's counter is stale the moment it stops moving, so
-            // the whole right flank becomes the verdict instead. `product.md`
-            // files the verdicts under Events, not here — for now they ride out
-            // the Activity they belong to.
-            Group {
-                if let ending = build.ending {
-                    Image(systemName: ending == .succeeded ? "checkmark.circle.fill" : "hammer.fill")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(ending == .succeeded ? Color.green : .red)
-                } else {
-                    HStack(spacing: 5) {
-                        VStack(alignment: .trailing, spacing: 0) {
-                            Text("\(build.done)")
-                            Text("\(build.total)")
-                        }
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .foregroundStyle(.white.opacity(0.85))
-                        ring(build.fraction, tint: .blue)
-                    }
+            HStack(spacing: 5) {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("\(build.done)")
+                    Text("\(build.total)")
                 }
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .foregroundStyle(.white.opacity(0.85))
+                ring(build.fraction, tint: .blue)
             }
-            .flankSlot(metrics.wideFlank, .trailing, pad: metrics.notchPad)
+            // Flush against the housing, where every other flank keeps
+            // `notchPad`. What hugs the notch here is a two-line number stack at
+            // 9pt, and a pair of short rows reads as further out than a single
+            // 12pt row at the same gap — the ring on the far end is also
+            // pulling the eye outward. Giving the pad back is what puts the
+            // counter next to the housing instead of adrift beside it.
+            .flankSlot(metrics.statFlanks.right, .trailing, pad: 0)
         }
         .frame(height: metrics.notch.height)
     }
 
     /// The real Xcode icon when the watcher caught it, a hammer when the
     /// Accessibility grant is missing and there is nothing to copy it from.
-    /// 16pt, not the accessory glyph's 20 — the label stacks under it and the
-    /// pair has to clear the notch's own height.
-    @ViewBuilder private func buildIcon(_ build: BuildProgress) -> some View {
+    /// 20pt in both pills: the stack under it is a word either way, and 20 + the
+    /// 8pt line is what clears the notch's own height with a point to spare.
+    ///
+    /// Not private: the verdict Event draws the same icon, and the two pills
+    /// live in different categories now.
+    @ViewBuilder func buildIcon(_ build: BuildProgress, size: CGFloat = 20) -> some View {
         if let icon = build.icon {
-            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+            Image(nsImage: icon).resizable().frame(width: size, height: size)
         } else {
             Image(systemName: "hammer.fill")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: size * 0.8, weight: .medium))
                 .foregroundStyle(.white)
-                .frame(height: 16)
+                .frame(height: size)
         }
     }
 }

@@ -24,9 +24,9 @@ struct PowerSample {
     }
 }
 
+/// The two subsystems that stall a build: the die getting hot and the cores
+/// staying pegged. One each for the notch's two edges.
 struct StallSample {
-    var pressure: Int32 = 1        // 1 normal, 2 warn, 4 critical
-    var swapUsedMB: Double = 0
     var cpuPercent: Double = 0
     /// Hottest die sensor, °C. Nil on a machine whose sensor tree we cannot read.
     var tempC: Double?
@@ -110,15 +110,12 @@ final class Telemetry {
 
     /// Seconds of continuous CPU load above the sustained threshold.
     private(set) var cpuSustainedSeconds: Double = 0
-    /// Swap gained over the trailing window, in MB.
-    private(set) var swapGrowthMB: Double = 0
     /// True for the single sample where a long busy stretch has gone quiet — the
     /// closest thing to "your build finished" without a hook into Xcode.
     private(set) var loadFinished = false
 
     static let historyLength = 120
     private static let sustainedCPUThreshold = 85.0
-    private static let swapWindow: TimeInterval = 300
 
     /// Calibration knobs for the finished-load heuristic. Idle on this machine
     /// sits well under 30% with Chrome open; the 10s hold is what stops a build
@@ -130,7 +127,6 @@ final class Telemetry {
     private var cpuQuietSeconds: Double = 0
     private var sawSustainedLoad = false
 
-    private var swapHistory: [(at: Date, mb: Double)] = []
     private var lastCPUTicks: (user: UInt64, sys: UInt64, idle: UInt64, nice: UInt64)?
     private var lastCPUSampleAt: Date?
 
@@ -140,7 +136,6 @@ final class Telemetry {
     private static let temperature = TemperatureSensors()
 
     private var timer: Timer?
-    private var pressureSource: DispatchSourceMemoryPressure?
     private var powerSource: CFRunLoopSource?
 
     /// Fires whenever any source produces fresh numbers.
@@ -155,12 +150,6 @@ final class Telemetry {
     func start() {
         sampleAll()
         restartTimer()
-
-        // Push: memory pressure.
-        let src = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
-        src.setEventHandler { [weak self] in self?.sampleStall(); self?.onUpdate?() }
-        src.resume()
-        pressureSource = src
 
         // Push: thermal state. The four words themselves are no longer used —
         // the die reading drives everything now — but a state change is a free
@@ -203,13 +192,11 @@ final class Telemetry {
 
     // MARK: Power
 
-    // MARK: Power
-
     private func samplePower() {
         // Keep the last good sample rather than publishing a default one. A miss
-        // here used to read as 0% on battery, which clears `charged` and asserts
-        // `chargerDisconnected` — so the next successful read fired a "Charged"
-        // pill for a battery that had been full the whole time.
+        // here used to read as 0%, which clears `charged` — so the next
+        // successful read fired a "Charged" pill for a battery that had been
+        // full the whole time.
         guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
               let raw = list.lazy.compactMap({
@@ -296,23 +283,14 @@ final class Telemetry {
 
     // MARK: Stall risk
 
-    // MARK: Stall risk
-
     private func sampleStall() {
         var s = StallSample()
-        s.pressure = Self.sysctlInt32("kern.memorystatus_vm_pressure_level") ?? 1
-        s.swapUsedMB = Self.swapUsedMB()
         s.cpuPercent = cpuPercent() ?? stall.cpuPercent
         s.tempC = Self.temperature?.read() ?? stall.tempC
         stall = s
 
         cpuHistory.append(s.cpuPercent)
         if cpuHistory.count > Self.historyLength { cpuHistory.removeFirst(cpuHistory.count - Self.historyLength) }
-
-        let now = Date()
-        swapHistory.append((now, s.swapUsedMB))
-        swapHistory.removeAll { now.timeIntervalSince($0.at) > Self.swapWindow }
-        swapGrowthMB = s.swapUsedMB - (swapHistory.first?.mb ?? s.swapUsedMB)
     }
 
     private func cpuPercent() -> Double? {
@@ -357,20 +335,5 @@ final class Telemetry {
         if loadFinished { sawSustainedLoad = false }
 
         return pct
-    }
-
-    // MARK: sysctl helpers
-
-    private static func sysctlInt32(_ name: String) -> Int32? {
-        var v: Int32 = 0
-        var size = MemoryLayout<Int32>.size
-        return sysctlbyname(name, &v, &size, nil, 0) == 0 ? v : nil
-    }
-
-    private static func swapUsedMB() -> Double {
-        var usage = xsw_usage()
-        var size = MemoryLayout<xsw_usage>.size
-        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else { return 0 }
-        return Double(usage.xsu_used) / 1_048_576
     }
 }

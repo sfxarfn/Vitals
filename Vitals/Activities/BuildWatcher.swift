@@ -8,10 +8,21 @@ import ApplicationServices
 
 /// What Xcode's toolbar activity view is saying right now.
 struct BuildProgress: Equatable {
-    /// How a run finished. Absent while it is still running.
-    enum Ending: Equatable { case succeeded, failed, canceled }
+    /// How a run finished. Always nil on `progress` — the watcher only ever
+    /// publishes a running build — and set on the copy handed to `onVerdict`,
+    /// which is what the Event draws.
+    ///
+    /// Two outcomes, not three: a cancel is filed as a failure. What the notch
+    /// is for is telling you the thing you walked away from is done, and a run
+    /// you stopped yourself is one you already know about — splitting it out
+    /// bought a third word and a third glyph for news nobody was waiting on.
+    enum Ending: Equatable { case succeeded, failed }
 
     var label: String
+    /// What kind of run this is, as a noun — "Build", "Archive". `label` says
+    /// what is happening to it and stops naming it once the run ends badly, so
+    /// this is what the verdict pill puts under Xcode's icon.
+    var job = "Build"
     var done: Int
     var total: Int
     /// Xcode's own icon, off the running app rather than a bundled copy, so a
@@ -42,6 +53,10 @@ final class BuildWatcher {
     /// stays checked. Settings watches this to know when to offer the button.
     private(set) var trusted = AXIsProcessTrusted()
     var onChange: (() -> Void)?
+    /// Fired once, when a run ends. The Activity is already over by then —
+    /// `progress` has gone back to nil — and how it ended is an Event the notch
+    /// queues, so this watcher does not own that pill's clock.
+    var onVerdict: ((BuildProgress) -> Void)?
 
     private var timer: Timer?
     private var stream: FSEventStreamRef?
@@ -63,9 +78,6 @@ final class BuildWatcher {
     /// Text from the most recent scan, kept only so the tick that loses the
     /// counter can read the verdict out of the same walk that lost it.
     private var lastText = ""
-    /// When the finished pill comes down. Non-nil means the run is over and the
-    /// watcher is only waiting out the hold — it stops reading Xcode entirely.
-    private var verdictUntil: Date?
     /// When the counter stopped answering. Nil while it is still being read.
     private var lostAt: Date?
 
@@ -75,12 +87,13 @@ final class BuildWatcher {
     ///
     /// Indexing is deliberately absent — it runs after nearly every edit, and a
     /// notch lit all day is one nobody reads. Add its stem here if you want it.
-    /// `past` is what the pill says once the run is over — "Archiving" becomes
-    /// "Archived", so the same pill reads as a verdict without changing shape.
-    private static let jobs: [(stem: String, label: String, past: String)] = [
-        ("archiv", "Archiving", "Archived"), ("build", "Building", "Built"),
-        ("test", "Testing", "Tested"), ("clean", "Cleaning", "Cleaned"),
-        ("analyz", "Analyzing", "Analyzed"),
+    /// `noun` is what the verdict puts under the icon: the pill's other flank
+    /// says only how the run ended, so this is the only thing left naming the
+    /// work — "Archive · Success".
+    private static let jobs: [(stem: String, label: String, noun: String)] = [
+        ("archiv", "Archiving", "Archive"), ("build", "Building", "Build"),
+        ("test", "Testing", "Test"), ("clean", "Cleaning", "Clean"),
+        ("analyz", "Analyzing", "Analyze"),
     ]
 
     /// Poll rate *while a build is running*. There is no resting rate: with the
@@ -89,10 +102,6 @@ final class BuildWatcher {
     /// How long the disk may stay quiet before the poll gives up. Linking and
     /// the tail of a build both go silent for a few seconds without ending.
     private static let grace: TimeInterval = 6
-    /// How long the verdict pill stays up after the counter goes away. Long
-    /// enough to catch out of the corner of an eye, short enough that it is gone
-    /// before you look back at the editor.
-    private static let verdictHold: TimeInterval = 4
     /// How long the toolbar gets to publish its result text before the counter
     /// itself is used to guess one. Xcode swaps the activity view's contents a
     /// beat after the counter goes, so reading it on the very first miss finds
@@ -146,20 +155,12 @@ final class BuildWatcher {
         status = nil
         misses = 0
         nextRead = .distantPast
-        verdictUntil = nil
         lostAt = nil
         lastText = ""
         publish(nil)
     }
 
     private func tick() {
-        // A verdict is showing: the run is over, so nothing about Xcode can
-        // change what the pill says. Wait it out and take the pill down.
-        if let until = verdictUntil {
-            if Date.now >= until { stop() }
-            return
-        }
-
         // Before the backoff gate, not after: this is the healthy end of a
         // build, and it must not wait out a gap that only exists because the
         // toolbar went unreadable.
@@ -190,7 +191,7 @@ final class BuildWatcher {
         // run or a tick that could not read the toolbar, and the two look
         // identical for the first moment — so the pill stays up while we find
         // out, rather than blinking off and back on.
-        if hit == nil, let running = progress, running.ending == nil {
+        if hit == nil, let running = progress {
             let lost = lostAt ?? .now
             lostAt = lost
             #if DEBUG
@@ -200,11 +201,19 @@ final class BuildWatcher {
                     ?? (Date.now.timeIntervalSince(lost) >= Self.settle ? Self.guess(running) : nil)
             else { nextRead = .now + Self.live; return }
 
-            publish(BuildProgress(
-                label: ending == .succeeded ? Self.past(of: running.label)
-                     : ending == .canceled ? "Canceled" : "Failed",
-                done: running.done, total: running.total, icon: icon, ending: ending))
-            verdictUntil = .now + Self.verdictHold
+            // Both words are verdicts, never the job in past tense: the noun
+            // opposite already says what ended, so this flank only has to say
+            // how. "Built" beside "Build" was the same word twice.
+            let finished = BuildProgress(
+                label: ending == .succeeded ? "Success" : "Failed",
+                job: running.job,
+                done: running.done, total: running.total, icon: icon, ending: ending)
+            // Tear down first, then hand the verdict over: the Activity has to
+            // be gone before the Event is queued, or the pill would be arbitrated
+            // against a build that already finished — and would fall back to it
+            // when it times out.
+            stop()
+            onVerdict?(finished)
             return
         }
         lostAt = nil
@@ -352,7 +361,7 @@ final class BuildWatcher {
               let m = text.firstMatch(of: /(\d+)\s*(?:\/|of)\s*(\d+)/),
               let done = Int(m.1), let total = Int(m.2), total > 0
         else { return nil }
-        return BuildProgress(label: job.label, done: done, total: total, icon: icon)
+        return BuildProgress(label: job.label, job: job.noun, done: done, total: total, icon: icon)
     }
 
     /// The verdict Xcode leaves in the activity view once the counter goes away:
@@ -360,10 +369,12 @@ final class BuildWatcher {
     /// the counter vanishes — the same words sit there all day afterwards, so
     /// anything that read them unprompted would announce the last build forever.
     ///
-    /// Cancel is checked first: a cancelled run also says the job's own word, and
-    /// "Failed" can appear beside it.
+    /// The cancel stems are still matched even though they land on the same
+    /// ending as a failure: "Canceled" contains neither "fail" nor "success", so
+    /// without them a stopped run reads as no verdict at all and falls through
+    /// to the guess below.
     private func verdict(_ text: String) -> BuildProgress.Ending? {
-        for (stem, ending) in [("cancel", BuildProgress.Ending.canceled), ("stopp", .canceled),
+        for (stem, ending) in [("cancel", BuildProgress.Ending.failed), ("stopp", .failed),
                                ("fail", .failed), ("error", .failed),
                                ("succeed", .succeeded), ("success", .succeeded)]
         where text.localizedCaseInsensitiveContains(stem) { return ending }
@@ -373,18 +384,13 @@ final class BuildWatcher {
     /// No words to go on — Xcode does not always leave a result in the activity
     /// view, and a cancel can clear it outright. The counter is the only other
     /// evidence: a run that vanished near its total finished, one that vanished
-    /// halfway was stopped.
+    /// halfway did not.
     ///
     /// ponytail: a threshold, not a real signal. The counter is Xcode's own
     /// estimate and drifts, so this only has to separate "nearly done" from
     /// "nowhere near". Parse the build log if it ever needs to be exact.
     private static func guess(_ running: BuildProgress) -> BuildProgress.Ending {
-        running.fraction >= 0.95 ? .succeeded : .canceled
-    }
-
-    /// Past tense of whatever was running, for a run that ended well.
-    private static func past(of label: String) -> String {
-        jobs.first { $0.label == label }?.past ?? label
+        running.fraction >= 0.95 ? .succeeded : .failed
     }
 
     // MARK: The gate

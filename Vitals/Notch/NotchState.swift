@@ -21,6 +21,11 @@ enum NotchState: Equatable {
     case accessory(Accessory)
     /// Sound just fell off a headset back onto the built-in speakers.
     case audioLost
+    /// How a run in Xcode ended. The Activity is over by the time this shows —
+    /// it queues, waits its turn and leaves on the Event clock like every other
+    /// piece of news, rather than riding out the build it reports on.
+    /// `BuildProgress.ending` is non-nil in this state by construction.
+    case verdict(BuildProgress)
 
     // MARK: Activity
 
@@ -37,10 +42,15 @@ enum NotchState: Equatable {
     case panel
 }
 
+/// What each side of a state buys. Separate numbers because a state whose two
+/// sides say different-sized things should not pay the wider one twice — but a
+/// pair that differs by only a few points reads as a shape that failed to line
+/// up, so a family either leans clearly or not at all.
+typealias Flanks = (left: CGFloat, right: CGFloat)
+
 /// Every width the shape can take. The notch stays as narrow as its content
 /// allows: each family below is a ceiling, set by the longest string that family
-/// can ever draw, and both flanks take the same one so the shape never leans by
-/// a few points. Change the string and the ceiling moves with it.
+/// can ever draw. Change the string and the ceiling moves with it.
 struct NotchMetrics {
     /// Physical notch, measured from the screen's auxiliary areas.
     var notch: CGSize
@@ -53,71 +63,123 @@ struct NotchMetrics {
     /// not use falls outward against the bezel instead. See `flankSlot`.
     var notchPad: CGFloat = 4
     /// A lone glyph, a ring, or a short reading: the compact event pill, the
-    /// accessory pill, the audio handoff. Ceiling is "100%" at 12pt, 33pt — and
-    /// the compact pill is the charged pill, so that is the string it draws.
-    var glyphFlank: CGFloat = 42
+    /// accessory pill, the audio handoff. Ceiling is "100%" at 12pt, 35pt — the
+    /// value side, not the glyph side. The widest glyph any of them draws is
+    /// `battery.100percent.bolt` at 29pt, which fits inside that.
+    var glyphFlank: CGFloat = 40
     /// The sided pills fit a glyph *and* its value in one flank, so they need
-    /// more than a lone glyph does. Ceiling is the thermal pair, 12 + 4 + 28.
-    var sidedFlank: CGFloat = 56
-    /// The build Activity and peek, which stack a pair of values in each flank.
-    /// Shared on purpose: peek can replace a build under a resting pointer, and
-    /// the shape must not resize under the cursor. That is the one case where
-    /// matching beats shrinking. Ceiling is peek's readout: 20pt symbol box + 4
-    /// + "100%". Both readings really do reach three digits — a pegged CPU and a
-    /// hot die — so the pad is on top of that, not inside it.
-    var wideFlank: CGFloat = 66
-    /// The full event pill puts a whole title in a flank. Ceiling is "Memory
-    /// pressure" at 11pt, 94pt. Derived off the notch rather than fixed, so the
-    /// title gets the same room on a machine whose notch is wider.
-    var eventFlank: CGFloat = 106
+    /// more than a lone glyph does. Ceiling is the thermal pair at its hottest:
+    /// `thermometer.high` 12 + 4 + "100°" at 12pt, 32pt.
+    var sidedFlank: CGFloat = 52
+    /// The build Activity and peek, which stack a pair of values in each flank —
+    /// and the one family where the two sides do not claim the same width, so it
+    /// is the one that leans.
+    ///
+    /// Shared between those two states on purpose: peek can replace a build
+    /// under a resting pointer, and the shape must not resize under the cursor.
+    /// So each side here is the wider of what the two states ask of it, not what
+    /// either asks on its own.
+    ///
+    /// Ceiling is peek's "100%" beside its 20pt symbol box, 63pt. The heat side
+    /// measures a point under that — a degree sign is narrower than a percent —
+    /// and the build's widest ask, a five-digit counter next to its 20pt ring,
+    /// wants 60. All three round to the same number: a lean that comes out of
+    /// glyph widths is noise, not a layout, and the two sides are a matched pair.
+    ///
+    /// Both readings really do reach three digits — a pegged CPU and a hot die —
+    /// so the pad is on top of that, not inside it.
+    var statFlanks: Flanks = (64, 64)
+    /// A finished build: Xcode's icon over the job's noun on one side, the
+    /// verdict glyph over its own word on the other. It briefly leaned, when the
+    /// left was a bare icon; putting the noun back under it made the two sides a
+    /// matched pair again, so they round together.
+    ///
+    /// Ceiling is "Success" at 8pt, level with "Archive" and "Analyze" on the
+    /// left and wider than either glyph. The other 18 is clearance, not padding:
+    /// a stacked flank
+    /// puts its word on the bottom row, where `bottomCornerRadius` is curving
+    /// back in, and the outline takes 6–9pt of horizontal bite across the
+    /// letters. Sized to the word alone, the last one gets shaved off.
+    var verdictFlanks: Flanks = (56, 56)
+    /// The full event pill puts a whole title in a flank. Ceiling is "Load
+    /// finished" at 11pt, 73pt. Nothing draws this shape today — every Signal is
+    /// either compact or sided — so that ceiling is the longest title in the
+    /// enum rather than one measured against a pill on screen.
+    var eventFlank: CGFloat = 78
     var panelBodyHeight: CGFloat = 94
-    /// The widest the notch ever goes: a title in one flank and a glyph in the
-    /// other. It overlaps the tail of the focused app's menus, which is accepted
-    /// because it is transient and macOS offers no way to reserve the space.
-    var pillWidth: CGFloat { notch.width + eventFlank * 2 }
-    /// The panel is peek's width — opening it out of a hover only drops the
-    /// shelf down, it never widens the shape under the pointer. Its body needs
-    /// ~215pt for the AirDrop tile and the shelf, which peek's own flanks
-    /// already clear.
-    var panelWidth: CGFloat { notch.width + wideFlank * 2 }
 
-    func size(for state: NotchState) -> CGSize {
+    // MARK: What a state buys
+
+    /// The two flanks a state grows, in the order they sit on screen. Whatever
+    /// this returns, the notch's own width sits untouched between them.
+    func flanks(for state: NotchState) -> Flanks {
         switch state {
-        case .idle:      notch
+        case .idle: (0, 0)
+        // The full pill is the widest the notch ever goes: a title in one flank
+        // and a glyph in the other. It overlaps the tail of the focused app's
+        // menus, which is accepted because it is transient and macOS offers no
+        // way to reserve the space.
         case .event(let event):
-            if event.signal.isCompact {
-                CGSize(width: notch.width + glyphFlank * 2, height: notch.height)
-            } else {
-                CGSize(width: pillWidth, height: notch.height)
-            }
+            event.signal.isCompact ? (glyphFlank, glyphFlank) : (eventFlank, eventFlank)
         // One flank per live side — see `Signal.side`. Nothing to say on the far
         // flank means nothing is bought there, so the notch leans all the way
         // and the lean is what says which subsystem is talking. A second side
         // arriving buys the same width on its edge rather than resizing the
         // first, and the shape is symmetric again.
         case .sided(let left, let right):
-            CGSize(width: notch.width + sidedFlank * CGFloat([left, right].compactMap { $0 }.count),
-                   height: notch.height)
-        case .accessory,
-             .audioLost: CGSize(width: notch.width + glyphFlank * 2, height: notch.height)
+            (left == nil ? 0 : sidedFlank, right == nil ? 0 : sidedFlank)
+        case .accessory, .audioLost: (glyphFlank, glyphFlank)
+        // The verdict says less than the counter it follows, so the notch
+        // shrinks as the build ends rather than holding the width it needed
+        // while running.
+        case .verdict: verdictFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
-        case .building:  CGSize(width: notch.width + wideFlank * 2, height: notch.height)
-        // Same width as the build Activity, twice as tall — enough to read as
-        // "it noticed you" without claiming the screen the way the panel does.
-        case .peek:      CGSize(width: notch.width + wideFlank * 2, height: notch.height * 2)
+        case .building: statFlanks
+        // Peek is the build Activity's width, and the panel is peek's — opening
+        // one out of the other only drops the shelf down, it never widens the
+        // shape under the pointer. The panel's body needs ~215pt for the AirDrop
+        // tile and the shelf, which these flanks already clear.
+        case .peek, .panel: statFlanks
+        }
+    }
+
+    /// How far the shape sits off the notch's own centre. Uneven flanks are
+    /// still drawn centred in the window, which would slide the camera housing
+    /// out from under the middle; putting half the difference back is what keeps
+    /// the dead space over the housing where it physically is.
+    func lean(for state: NotchState) -> CGFloat {
+        let f = flanks(for: state)
+        return (f.right - f.left) / 2
+    }
+
+    func size(for state: NotchState) -> CGSize {
+        let f = flanks(for: state)
+        return CGSize(width: notch.width + f.left + f.right, height: height(for: state))
+    }
+
+    /// Height is what separates the categories on sight, so only the two
+    /// Interactions are allowed to use it.
+    private func height(for state: NotchState) -> CGFloat {
+        switch state {
+        // Twice the notch — enough to read as "it noticed you" without claiming
+        // the screen the way the panel does.
+        case .peek:  notch.height * 2
         // The only state that grows past two rows. Roughly the three notch
         // heights `design.md` asks for — `panelBodyHeight` is what the AirDrop
         // tile and the shelf actually need, and that runs a little over.
-        case .panel:     CGSize(width: panelWidth, height: notch.height + panelBodyHeight)
+        case .panel: notch.height + panelBodyHeight
+        default:     notch.height
         }
     }
 
     /// The window is sized once to the largest state; everything else insets into
-    /// it. The slack has to cover the shape's top flare on both sides *and* the
-    /// ambient shadow past it — radius 24 blurs ~36pt out, plus its 12pt drop.
+    /// it. The slack has to cover the shape's top flare on both sides, the lean
+    /// of the widest uneven state, *and* the ambient shadow past all of it —
+    /// radius 24 blurs ~36pt out, plus its 12pt drop.
     var windowSize: CGSize {
-        CGSize(width: max(pillWidth, panelWidth) + 160, height: notch.height + panelBodyHeight + 72)
+        let widest = notch.width + max(eventFlank * 2, statFlanks.left + statFlanks.right)
+        return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }
 
@@ -133,8 +195,19 @@ extension View {
     ///
     /// The notch's own width in the middle is dead space — the camera housing
     /// sits over it — so every pill is two of these with nothing between them.
-    func flankSlot(_ width: CGFloat, _ side: HorizontalEdge, pad: CGFloat) -> some View {
-        padding(side == .leading ? .trailing : .leading, pad)
-            .frame(width: width, alignment: side == .leading ? .trailing : .leading)
+    ///
+    /// `centered` opts out, splitting the slack instead of dropping it all
+    /// outward. It is for the flank that holds a lone glyph opposite one holding
+    /// a value: hugging is what makes a *pair* of contents read as one cluster,
+    /// but a glyph against a three-digit number is not a pair, and pinning both
+    /// leaves the narrow side with a visibly bigger outer gap than the wide one.
+    /// Centring costs the pad, which is the point — the glyph sits halfway
+    /// between the housing and the bezel rather than against either.
+    func flankSlot(_ width: CGFloat, _ side: HorizontalEdge, pad: CGFloat,
+                   centered: Bool = false) -> some View {
+        let innerEdge: Edge.Set = side == .leading ? .trailing : .leading
+        let innerAlignment: Alignment = side == .leading ? .trailing : .leading
+        return padding(centered ? [] : innerEdge, pad)
+            .frame(width: width, alignment: centered ? .center : innerAlignment)
     }
 }

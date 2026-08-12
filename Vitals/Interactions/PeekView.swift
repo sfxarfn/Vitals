@@ -13,10 +13,10 @@ extension NotchView {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 readout("thermometer.medium", tempValue, tint: tempTint)
-                    .flankSlot(metrics.wideFlank, .leading, pad: metrics.notchPad)
+                    .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad)
                 Spacer(minLength: 0).frame(width: metrics.notch.width)
                 readout("cpu", "\(Int(telemetry.stall.cpuPercent.rounded()))%", tint: .white)
-                    .flankSlot(metrics.wideFlank, .trailing, pad: metrics.notchPad)
+                    .flankSlot(metrics.statFlanks.right, .trailing, pad: metrics.notchPad)
             }
             .frame(height: metrics.notch.height)
             peekRow.frame(maxWidth: .infinity, maxHeight: .infinity)
