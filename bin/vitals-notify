@@ -1,0 +1,129 @@
+#!/bin/sh
+
+set -u
+
+usage() {
+    /bin/cat >&2 <<'USAGE'
+Usage:
+  vitals-notify event <event-name>
+  vitals-notify activity-start <activity-name> [--id <id>]
+  vitals-notify activity-stop [--id <id>]
+  vitals-notify run <activity-name> -- <command> [arguments...]
+
+Examples:
+  vitals-notify event build-failed
+  vitals-notify run tests -- npm test
+USAGE
+}
+
+fail() {
+    /bin/echo "vitals-notify: $1" >&2
+    exit 2
+}
+
+require_vitals() {
+    /usr/bin/pgrep -x Vitals >/dev/null 2>&1 || {
+        /bin/echo "vitals-notify: Vitals is not running" >&2
+        return 1
+    }
+}
+
+# Arguments cross into JavaScript as an array, then into Foundation as one JSON
+# string. Nothing from the command line is interpolated into source code.
+post() {
+    require_vitals || return 1
+    /usr/bin/osascript -l JavaScript -e '
+        ObjC.import("Foundation")
+        function run(argv) {
+            const payload = { version: 1, command: argv[0] }
+            if (argv[1]) payload.name = argv[1]
+            if (argv[2]) payload.id = argv[2]
+            $.NSDistributedNotificationCenter.defaultCenter
+                .postNotificationNameObjectUserInfoDeliverImmediately(
+                    $("com.polkka.Vitals.command"),
+                    $(JSON.stringify(payload)),
+                    null,
+                    true
+                )
+        }
+    ' "$1" "${2-}" "${3-}" >/dev/null
+}
+
+default_id="${VITALS_ACTIVITY_ID:-shell-$PPID}"
+
+[ "$#" -gt 0 ] || { usage; exit 2; }
+verb=$1
+shift
+
+case "$verb" in
+    event)
+        [ "$#" -eq 1 ] || fail "event expects one name"
+        post event "$1" ""
+        ;;
+
+    activity-start)
+        [ "$#" -ge 1 ] || fail "activity-start expects a name"
+        activity_name=$1
+        shift
+        activity_id=$default_id
+        if [ "$#" -gt 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = "--id" ] || fail "expected --id <id>"
+            activity_id=$2
+        fi
+        post activity-start "$activity_name" "$activity_id"
+        ;;
+
+    activity-stop)
+        activity_id=$default_id
+        if [ "$#" -gt 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = "--id" ] || fail "expected --id <id>"
+            activity_id=$2
+        fi
+        post activity-stop "" "$activity_id"
+        ;;
+
+    run)
+        [ "$#" -ge 3 ] || fail "run expects a name, --, and a command"
+        activity_name=$1
+        shift
+        [ "$1" = "--" ] || fail "run expects -- before the command"
+        shift
+        [ "$#" -gt 0 ] || fail "run expects a command"
+
+        activity_id="run-$$"
+        post activity-start "$activity_name" "$activity_id" || exit 1
+
+        finish_run() {
+            result=$?
+            trap - 0 1 2 15
+            post activity-stop "" "$activity_id" || :
+            if [ "$result" -eq 0 ]; then
+                post event "$activity_name-succeeded" "" || :
+            else
+                post event "$activity_name-failed" "" || :
+            fi
+            exit "$result"
+        }
+        finish_signal() {
+            result=$1
+            trap - 0 1 2 15
+            post activity-stop "" "$activity_id" || :
+            post event "$activity_name-failed" "" || :
+            exit "$result"
+        }
+        trap finish_run 0
+        trap 'finish_signal 129' 1
+        trap 'finish_signal 130' 2
+        trap 'finish_signal 143' 15
+        "$@"
+        exit $?
+        ;;
+
+    -h|--help|help)
+        usage
+        ;;
+
+    *)
+        fail "unknown command: $verb"
+        ;;
+esac

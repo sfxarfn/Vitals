@@ -64,7 +64,8 @@ which subsystem is talking before you read anything.
   - **Cooling Down** — it came back down; you can stop waiting, and the left edge goes dark
 - **CPU**
   - **Caution** — sustained load, long enough that it is the machine and not a blip; lights the right edge
-  - **Releasing** — the load let go, the machine is yours again, and the right edge goes dark
+  - The right edge goes dark when load releases, but CPU telemetry does not call
+    that “finished”: a process reports its exact outcome through Commands.
 - **Connections**
   - **Apple Accessory Connected** — a first-party device, drawn as itself
   - **Generic Accessory Connected** — everything else, drawn by what kind of thing it is
@@ -82,6 +83,10 @@ which subsystem is talking before you read anything.
     word and a third glyph spent on news nobody was waiting for.
   - **Build Succeeded** — the run you walked away from is done; this is the pill
     that says the machine is yours again
+- **Commands**
+  - **Reported Event** — a process says what happened in kebab-case, split over
+    the two flanks as subject and outcome (`tests-passed` → `Tests · Passed`).
+    Explicit reports are facts, so they are not thresholded or rate-limited.
 
 Every Event has a side. Two on the same side: the newer one replaces what is
 there. Two on different sides: both show at once.
@@ -94,3 +99,8 @@ the notch falls to Idle if it finished meanwhile.
 
 - **Xcode**
   - **Build In Progress** — what is running, and how far in
+- **Commands**
+  - **Reported Activity** — long-running work explicitly opens a lifecycle and
+    closes it when done. It shows that it is running but invents no progress;
+    multiple process IDs stack, with the newest visible and the previous one
+    resuming when it stops.

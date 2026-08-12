@@ -31,12 +31,17 @@ enum NotchState: Equatable {
     /// piece of news, rather than riding out the build it reports on.
     /// `BuildProgress.ending` is non-nil in this state by construction.
     case verdict(BuildProgress)
+    /// A one-shot reported explicitly by `vitals-notify`, where the process
+    /// knows its own outcome and Vitals does not have to infer one.
+    case externalEvent(ExternalEvent)
 
     // MARK: Activity
 
     /// Xcode is building or archiving. Not an Event — it holds for the whole
     /// build and is the resting state until it ends.
     case building(BuildProgress)
+    /// Long-running work reported explicitly by the process doing it.
+    case externalActivity(ExternalActivity)
 
     // MARK: Interactions
 
@@ -162,10 +167,10 @@ struct NotchMetrics {
         // The verdict says less than the counter it follows, so the notch
         // shrinks as the build ends rather than holding the width it needed
         // while running.
-        case .verdict: verdictFlanks
+        case .verdict, .externalEvent: verdictFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
-        case .building: statFlanks
+        case .building, .externalActivity: statFlanks
         // Peek is the build Activity's width, and the panel is peek's — opening
         // one out of the other only drops the shelf down, it never widens the
         // shape under the pointer. The panel's body needs ~215pt for the AirDrop

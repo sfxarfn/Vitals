@@ -23,7 +23,6 @@ struct Reading {
     /// which sits under every thermal threshold, so a missing sensor is silent.
     var dieTempC = 0.0
     var cpuSustainedSeconds = 0.0
-    var loadFinished = false
 }
 
 /// Everything the machine can say about itself, one case per Event `product.md`
@@ -38,8 +37,9 @@ enum Signal: String, CaseIterable {
     case chargingStarted, charged
     // Thermal — one ladder, warm from 80° and hot from 85°.
     case thermalWarm, thermalSerious
-    // CPU: the load going up, and the load letting go.
-    case cpuSustained, loadFinished
+    // CPU: sustained load is machine state. Completion belongs to the process
+    // that knows what it was doing and arrives through `vitals-notify`.
+    case cpuSustained
 
     /// Only the crossings you can act on are worth a pill. The two Cautions hold
     /// for as long as the work does, which is far too long to interrupt for, so
@@ -47,7 +47,7 @@ enum Signal: String, CaseIterable {
     var loudness: Loudness {
         switch self {
         case .chargingStarted, .charged,
-             .thermalSerious, .loadFinished:  .pill
+             .thermalSerious:                 .pill
         case .thermalWarm, .cpuSustained:     .glow
         }
     }
@@ -63,7 +63,6 @@ enum Signal: String, CaseIterable {
         // clears this — so plugging back in is a fresh crossing and fires again.
         case .chargingStarted:      (3, 1)
         case .charged:              (99.5, 98)
-        case .loadFinished:         (0.5, 0.5)
         // Degrees off the hottest die sensor, in one ladder: warm at 80, hot at
         // 85, back to warm under 75, and all the way to green under 60. The
         // clear-below numbers are what stop a build oscillating around a single
@@ -94,7 +93,6 @@ enum Signal: String, CaseIterable {
         // The percentage alone: a pack only climbs to full on the adapter, so
         // the "running on the adapter" half of the Event comes free.
         case .charged:              Double(r.percent)
-        case .loadFinished:         r.loadFinished ? 1 : 0
         case .thermalSerious,
              .thermalWarm:          r.dieTempC
         case .cpuSustained:         r.cpuSustainedSeconds
@@ -107,7 +105,6 @@ enum Signal: String, CaseIterable {
         switch self {
         case .chargingStarted:      "bolt.fill"
         case .charged:              "battery.100percent.bolt"
-        case .loadFinished:         "checkmark.circle.fill"
         case .thermalSerious:       "thermometer.high"
         case .thermalWarm:          "thermometer.medium"
         case .cpuSustained:         "cpu"
@@ -118,7 +115,6 @@ enum Signal: String, CaseIterable {
         switch self {
         case .chargingStarted:      "Charging"
         case .charged:              "Charged"
-        case .loadFinished:         "Load finished"
         case .thermalSerious:       "Running hot"
         case .thermalWarm:          "Warm"
         case .cpuSustained:         "CPU pegged"
@@ -131,7 +127,7 @@ enum Signal: String, CaseIterable {
         // read since long before this app: the colour is the state of the pack,
         // not a severity, so it does not share the Cautions' meaning of orange.
         case .chargingStarted:              .orange
-        case .charged, .loadFinished:       .green
+        case .charged:                      .green
         case .thermalSerious:               .red
         case .thermalWarm, .cpuSustained:   .orange
         }
@@ -166,7 +162,7 @@ enum Signal: String, CaseIterable {
     var side: Side {
         switch self {
         case .thermalWarm, .thermalSerious: .left
-        case .cpuSustained, .loadFinished:  .right
+        case .cpuSustained:                 .right
         case .chargingStarted, .charged:    .center
         }
     }
@@ -406,14 +402,6 @@ enum EventEngineSelfCheck {
         var n = primed()
         _ = n.update(Reading(), now: t0)
         assert(n.thermalGlow == nil)
-
-        // MARK: One-shots
-
-        // Load finished arrives as one: Telemetry raises it for a single sample,
-        // so the engine must fire on that sample and then go quiet.
-        var l = primed()
-        assert(l.update(Reading(loadFinished: true), now: t0) == [Event(signal: .loadFinished)])
-        assert(l.update(Reading(loadFinished: false), now: t0.addingTimeInterval(1)).isEmpty)
 
         print("EventEngine self-check passed")
     }

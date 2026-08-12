@@ -4,6 +4,42 @@ import SwiftUI
 /// between them, and each is up for `NotchController.eventDuration` and gone.
 extension NotchView {
 
+    // MARK: Explicit processes
+
+    /// A named Event reported by a process. Kebab-case buys the same two stacks
+    /// as a build verdict: what finished on the left, how it ended on the right.
+    func externalEventPill(_ event: ExternalEvent) -> some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 1) {
+                Image(systemName: event.subjectSymbol)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(height: 20)
+                Text(event.subject)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .foregroundStyle(.white)
+            }
+            .flankSlot(metrics.verdictFlanks.left, .leading,
+                       pad: metrics.notchPad, centered: true)
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            VStack(spacing: 1) {
+                Image(systemName: event.symbol)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(event.tint)
+                    .frame(height: 20)
+                Text(event.outcome)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .foregroundStyle(.white)
+            }
+            .offset(x: -2)
+            .flankSlot(metrics.verdictFlanks.right, .trailing,
+                       pad: metrics.notchPad, centered: true)
+        }
+        .frame(height: metrics.notch.height)
+    }
+
     // MARK: Sided
 
     /// One Event per live flank, with the notch's own width between them. A
@@ -25,20 +61,12 @@ extension NotchView {
     /// owning one each.
     private func flank(_ event: Event, _ side: HorizontalEdge) -> some View {
         HStack(spacing: 4) {
-            // CPU releasing is a verdict on work, not a reading: it leads
-            // with what was busy and lets the checkmark be the news, where
-            // every other one-sided pill leads with its own glyph.
-            if event.signal == .loadFinished {
-                Image(systemName: "cpu").foregroundStyle(.white)
-                Image(systemName: event.symbol).foregroundStyle(event.tint)
-            } else {
-                Image(systemName: event.symbol).foregroundStyle(event.tint)
-                Text(compactValue(event))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                    .foregroundStyle(.white)
-            }
+            Image(systemName: event.symbol).foregroundStyle(event.tint)
+            Text(compactValue(event))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(.white)
         }
         .font(.system(size: 15, weight: .medium))
         .flankSlot(metrics.sidedFlank, side, pad: metrics.notchPad)

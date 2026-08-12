@@ -63,7 +63,9 @@ struct NotchView: View {
         // The verdict is narrower than the counter it follows, so it is its own
         // shape — sharing the key would swap the content without the shrink.
         case .verdict:              11
+        case .externalEvent:        12
         case .building:             5
+        case .externalActivity:     13
         case .peek:                 6
         case .panel:                7
         }
@@ -185,10 +187,14 @@ struct NotchView: View {
             audioLostPill(loudness).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .verdict(let build):
             verdictPill(build).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .externalEvent(let event):
+            externalEventPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
 
         // Activity.
         case .building(let build):
             buildPill(build).transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+        case .externalActivity(let activity):
+            externalActivityPill(activity).transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
 
         // Interactions.
         case .peek:

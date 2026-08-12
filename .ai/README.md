@@ -60,6 +60,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`Accessory.swift`](../Vitals/Events/Accessory.swift) | Bluetooth accessory connect detection and battery. |
 | [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: sided, compact, accessory, audio lost. |
 | [`VerdictPill.swift`](../Vitals/Events/VerdictPill.swift) | How a finished build draws. An Event, not the tail of the Activity — the build has handed the notch back before this queues. |
+| [`../Vitals/Commands/CommandReceiver.swift`](../Vitals/Commands/CommandReceiver.swift) | The local, versioned protocol behind `vitals-notify`, plus the explicit Event and Activity models it accepts. |
 
 ### `Activities/` — work you started
 
@@ -67,6 +68,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 |---|---|
 | [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | Xcode build/archive progress, scraped off the toolbar over the Accessibility API. Ends by handing a verdict to `onVerdict`, which the controller queues as an Event. |
 | [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws. |
+| [`ExternalActivityPill.swift`](../Vitals/Activities/ExternalActivityPill.swift) | How explicitly reported long-running work draws when it has a lifecycle but no invented progress counter. |
 
 ### `Interactions/` — you reached for it
 
