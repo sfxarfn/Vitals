@@ -167,8 +167,8 @@ struct NotchView: View {
             compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .accessory(let accessory):
             accessoryPill(accessory).transition(.opacity.animation(.easeOut(duration: 0.2)))
-        case .audioLost:
-            audioLostPill.transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .audioLost(let loudness):
+            audioLostPill(loudness).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .verdict(let build):
             verdictPill(build).transition(.opacity.animation(.easeOut(duration: 0.2)))
 

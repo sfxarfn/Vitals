@@ -22,8 +22,10 @@ enum NotchState: Equatable {
     case sided(left: Event?, right: Event?)
     /// A Bluetooth accessory just connected: what it is, and how full it is.
     case accessory(Accessory)
-    /// Sound just fell off a headset back onto the built-in speakers.
-    case audioLost
+    /// Sound just fell off a headset back onto the built-in speakers, carrying
+    /// how loud they are set — 0 to 1, drawn as the speaker glyph's wave count.
+    /// Sampled at the handoff, because that is the moment being reported.
+    case audioLost(loudness: Double)
     /// How a run in Xcode ended. The Activity is over by the time this shows —
     /// it queues, waits its turn and leaves on the Event clock like every other
     /// piece of news, rather than riding out the build it reports on.

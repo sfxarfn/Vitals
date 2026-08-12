@@ -59,7 +59,11 @@ final class AccessoryWatcher {
     /// The headset that *was* the output is gone and sound has fallen back to
     /// the built-in speakers. Bluetooth → built-in only: swapping between two
     /// headsets is still a connect, and stays on `onConnect`.
-    var onDisconnect: (() -> Void)?
+    ///
+    /// Carries the speakers' output volume, 0–1. How loudly the room can hear
+    /// you is half of what this Event is for, so it is sampled at the moment of
+    /// the handoff rather than read later off a device that may have moved on.
+    var onDisconnect: ((Double) -> Void)?
 
     private let battery = BatteryReader()
     private let port = IONotificationPortCreate(kIOMainPortDefault)
@@ -175,11 +179,47 @@ final class AccessoryWatcher {
         // that switch by hand looks identical from here — CoreAudio reports the
         // route, not the reason — and the pill is cheap enough to be wrong.
         guard lastAudioWasBluetooth else {
-            if wasBluetooth { onDisconnect?() }
+            if wasBluetooth { onDisconnect?(Double(Self.outputVolume(device))) }
             return
         }
         guard let name = Self.name(of: device) else { return }
         announce(Accessory(name: name, kind: .audio, battery: nil))
+    }
+
+    /// A device's output volume, 0–1, for the speaker glyph's wave count.
+    ///
+    /// Two reads, because devices disagree about where the value lives: the main
+    /// element answers on the built-in speakers, and the ones that only publish
+    /// per-channel volume are averaged across the stereo pair instead.
+    ///
+    /// A device that answers neither reports 1. The pill exists to tell you the
+    /// room can hear you, so guessing quiet is the only guess that can do harm.
+    ///
+    /// ponytail: reads the scalar, not the mute flag — a muted machine draws
+    /// full waves. Add `kAudioDevicePropertyMute` if that false alarm shows up.
+    private static func outputVolume(_ device: AudioDeviceID) -> Float {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain)
+        var volume: Float = 0
+        var size = UInt32(MemoryLayout<Float>.size)
+        if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &volume) == noErr {
+            return volume
+        }
+
+        var sum: Float = 0
+        var answered = 0
+        for channel in UInt32(1)...2 {
+            address.mElement = channel
+            var channelVolume: Float = 0
+            size = UInt32(MemoryLayout<Float>.size)
+            if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &channelVolume) == noErr {
+                sum += channelVolume
+                answered += 1
+            }
+        }
+        return answered > 0 ? sum / Float(answered) : 1
     }
 
     private static func defaultOutputDevice() -> AudioDeviceID {

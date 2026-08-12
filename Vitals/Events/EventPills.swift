@@ -123,7 +123,9 @@ extension NotchView {
         }
     }
 
-    var audioLostPill: some View { AudioLostPill(metrics: metrics) }
+    func audioLostPill(_ loudness: Double) -> some View {
+        AudioLostPill(metrics: metrics, loudness: loudness)
+    }
 }
 
 // MARK: - Audio lost
@@ -141,6 +143,8 @@ extension NotchView {
 /// Its own type, not a method, because the turnover needs state of its own.
 private struct AudioLostPill: View {
     let metrics: NotchMetrics
+    /// The speakers' volume at the handoff, 0–1.
+    let loudness: Double
     @State private var lost = false
 
     var body: some View {
@@ -150,7 +154,11 @@ private struct AudioLostPill: View {
                 .contentTransition(.symbolEffect(.replace))
                 .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
-            Image(systemName: "speaker.wave.2.fill")
+            // Variable-value symbol: the waves are drawn by the volume, not
+            // picked. That is the second half of the message — you are on the
+            // speakers, and this is how much of you the room is getting. A
+            // muted machine draws the bare speaker.
+            Image(systemName: "speaker.wave.3.fill", variableValue: loudness)
                 .foregroundStyle(.white)
                 .opacity(lost ? 1 : 0)
                 .flankSlot(metrics.glyphFlank, .trailing, pad: metrics.notchPad)

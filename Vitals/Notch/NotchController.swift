@@ -58,9 +58,9 @@ final class NotchController {
             queue.append(.accessory(accessory))
             presentNext()
         }
-        accessories.onDisconnect = { [weak self] in
+        accessories.onDisconnect = { [weak self] loudness in
             guard let self else { return }
-            queue.append(.audioLost)
+            queue.append(.audioLost(loudness: loudness))
             presentNext()
         }
         accessories.start()
@@ -324,7 +324,9 @@ final class NotchController {
             ("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
             // No level reported — the flank falls back to the Bluetooth mark.
             ("Keyboard connected", .accessory(Accessory(name: "Magic Keyboard", kind: .keyboard, battery: nil))),
-            ("Audio lost", .audioLost),
+            // Two thirds up, so the preview shows the wave count doing something
+            // rather than sitting at either end of its range.
+            ("Audio lost", .audioLost(loudness: 0.66)),
         ]),
         ("Xcode", [
             ("Build in progress", .building(buildPreview("Building", nil))),
