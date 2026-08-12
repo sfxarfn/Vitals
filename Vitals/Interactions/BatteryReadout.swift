@@ -25,16 +25,15 @@ extension NotchView {
 
     var batteryStatus: some View {
         HStack(spacing: 7) {
-            // SF Symbols ships no upright battery, so the horizontal glyph is
-            // turned on its side. `rotationEffect` does not touch layout, hence
-            // the explicit box in the rotated proportions.
             Image(systemName: telemetry.power.isCharging
                   ? "battery.100percent.bolt"
                   : "battery.\(batteryStep)percent")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.white.opacity(0.85))
-                .rotationEffect(.degrees(-90))
-                .frame(width: 13, height: 26)
+                // The bolt variant is not the same width as the plain glyph, so
+                // a fixed box is what stops the two lines beside it sliding
+                // sideways the moment the charger goes in.
+                .frame(width: 26)
             VStack(alignment: .leading, spacing: 1) {
                 Text(powerSource)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))

@@ -36,6 +36,14 @@ struct StallSample {
     var dieGroups: [SensorGroup: Double] = [:]
 }
 
+/// Bytes per second through the machine's interfaces, each direction.
+struct NetSample {
+    var up: Double = 0
+    var down: Double = 0
+    /// A tunnel interface is up with an address on it.
+    var vpn = false
+}
+
 /// Which block of the die a temperature sensor sits on, read off the service's
 /// `Product` string. Only the three the panel names have a case; everything else
 /// — SOC, ANE, NAND, the gas gauge — is `other`. It still counts toward `tempC`,
@@ -156,6 +164,10 @@ final class Telemetry {
     /// there is no threshold, no pill and no glow behind it, just a number in a
     /// surface you had to click twice to reach.
     private(set) var memoryUsed: Double?
+    /// Throughput, both directions. Read only by peek, never by a `Signal` — same
+    /// standing as `memoryUsed`: no threshold, no pill, no glow, just a number in
+    /// a surface you had to hover for.
+    private(set) var net = NetSample()
 
     /// Seconds of continuous CPU load above the sustained threshold.
     private(set) var cpuSustainedSeconds: Double = 0
@@ -178,6 +190,9 @@ final class Telemetry {
 
     private var lastCPUTicks: (user: UInt64, sys: UInt64, idle: UInt64, nice: UInt64)?
     private var lastCPUSampleAt: Date?
+
+    private var lastNetBytes: (up: UInt32, down: UInt32)?
+    private var lastNetSampleAt: Date?
 
     /// Built once: enumerating the sensor tree is the expensive half, reading it
     /// is not. Nil if the private symbols ever go away, and everything downstream
@@ -237,6 +252,7 @@ final class Telemetry {
     private func sampleAll() {
         samplePower()
         sampleStall()
+        sampleNet()
     }
 
     // MARK: Power
@@ -391,6 +407,74 @@ final class Telemetry {
 
         return pct
     }
+
+    // MARK: Network
+
+    /// Rate is the delta between two reads, so the first one after launch only
+    /// primes the counters — there is nothing to subtract from yet.
+    private func sampleNet() {
+        guard let scan = Self.scanInterfaces() else { return }
+        let totals = (up: scan.up, down: scan.down)
+        let now = Date()
+        defer { lastNetBytes = totals; lastNetSampleAt = now }
+        // The tunnel is a level reading, not a rate — it does not have to wait for
+        // a second sample the way the throughput does.
+        net.vpn = scan.vpn
+        guard let prev = lastNetBytes, let then = lastNetSampleAt else { return }
+        let dt = now.timeIntervalSince(then)
+        guard dt > 0 else { return }
+        // `if_data`'s counters are 32-bit and wrap every 4GB, so the subtraction
+        // has to wrap with them — a plain `-` traps on the tick after a big
+        // download. An interface that goes down resets its counter instead, which
+        // wrapping cannot tell from real traffic; the ceiling throws that away.
+        let up = Double(totals.up &- prev.up) / dt
+        let down = Double(totals.down &- prev.down) / dt
+        let ceiling = 12.5e9  // 100 Gbit/s: past any port this machine has
+        net.up = up < ceiling ? up : 0
+        net.down = down < ceiling ? down : 0
+    }
+
+    /// Bytes in and out summed over every non-loopback interface, and whether any
+    /// tunnel among them is a real VPN. One walk of the list, because both
+    /// answers are in it and the walk is the expensive half.
+    ///
+    /// ponytail: a flat sum double-counts a full-tunnel VPN — those bytes are
+    /// counted once on `utun` and again on the `en` carrying them. Filter by name
+    /// if that matters; the reading is "is the network busy", not an audit.
+    private static func scanInterfaces() -> (up: UInt32, down: UInt32, vpn: Bool)? {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let head else { return nil }
+        defer { freeifaddrs(head) }
+
+        var up: UInt32 = 0, down: UInt32 = 0, vpn = false
+        for ptr in sequence(first: head, next: { $0.pointee.ifa_next }) {
+            let ifa = ptr.pointee
+            let name = String(cString: ifa.ifa_name)
+            guard !name.hasPrefix("lo"), let family = ifa.ifa_addr?.pointee.sa_family else { continue }
+
+            // Every interface is listed once per address family; only the AF_LINK
+            // entry carries `if_data`, the rest hold a sockaddr instead.
+            if family == UInt8(AF_LINK), let data = ifa.ifa_data?.assumingMemoryBound(to: if_data.self) {
+                up &+= data.pointee.ifi_obytes
+                down &+= data.pointee.ifi_ibytes
+            }
+
+            // A tunnel being up is not a VPN: macOS keeps `utun0`–`utun5` running
+            // for Handoff, Private Relay and friends, and the default route stays
+            // on `en0` for any split tunnel — which is why the primary interface
+            // cannot answer this either. What separates the two is an IPv4
+            // address: the system's own tunnels only ever carry link-local IPv6.
+            //
+            // ponytail: misses an IPv6-only VPN. Accepting a global IPv6 as well
+            // is the fix, and it costs the Private Relay exclusion this buys.
+            if family == UInt8(AF_INET), Self.tunnelPrefixes.contains(where: name.hasPrefix) {
+                vpn = true
+            }
+        }
+        return (up, down, vpn)
+    }
+
+    private static let tunnelPrefixes = ["utun", "ppp", "ipsec", "tun", "tap"]
 
     // MARK: Memory
 

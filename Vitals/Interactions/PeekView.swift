@@ -44,6 +44,9 @@ extension NotchView {
     /// the power was going, which is the half a hover is asking for.
     private var peekRow: some View {
         HStack(spacing: 10) {
+            networkStatus
+            Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
+                .padding(.horizontal, 4)
             // The summary is also the way into the numbers behind it — the panel
             // opens straight onto the battery row rather than the shelf.
             Button {
@@ -85,6 +88,71 @@ extension NotchView {
             .animation(.snappy(duration: 0.15), value: settingsHovered)
         }
     }
+
+    // MARK: Network
+
+    /// Both directions, stacked. Peek's row has no slack left for two readings
+    /// side by side, and the pair is one thought anyway — the arrow says which
+    /// way, so neither line needs a word.
+    private var networkStatus: some View {
+        HStack(spacing: 5) {
+            // Only when a tunnel is actually carrying the traffic — a badge that
+            // is always there says nothing, and the row has no width to spare.
+            if telemetry.net.vpn {
+                // The word rather than a glyph: every shield and lock symbol
+                // already means something else in this app's vocabulary, and
+                // three letters at this size read faster than any of them.
+                //
+                // Width is fixed, height is not — the box takes whatever the
+                // stacked pair beside it comes out at, so the two line up at both
+                // edges whatever the point sizes over there end up being.
+                Text("VPN")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 24)
+                    .frame(maxHeight: .infinity)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(.white.opacity(0.3), lineWidth: 1)
+                    }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                netLine("arrow.up", telemetry.net.up)
+                netLine("arrow.down", telemetry.net.down)
+            }
+        }
+        // Without this the row is as tall as peek's whole second row and the box
+        // stretches past the numbers — `maxHeight` fills what it is given, so it
+        // has to be given the pair's own height.
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func netLine(_ symbol: String, _ bytesPerSecond: Double) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.white.opacity(0.5))
+                // The two arrows are the same width, but the value beside them is
+                // not — a fixed box keeps the two rows' digits in one column.
+                .frame(width: 8)
+            Text(Self.rateFormatter.string(fromByteCount: Int64(max(bytesPerSecond, 0))) + "/s")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(.white.opacity(0.8))
+        }
+    }
+
+    /// Bytes never sits below KB — a row that flips between "812 bytes/s" and
+    /// "1.2 MB/s" changes width on every idle tick. Non-numeric formatting off for
+    /// the same reason: the default zero is the word "Zero".
+    private static let rateFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        f.allowsNonnumericFormatting = false
+        return f
+    }()
 
     // MARK: Stats
 

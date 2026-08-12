@@ -119,6 +119,9 @@ final class NotchController {
         }
         self.screen = screen
         metrics = NotchMetrics(notch: notch.size)
+        // Rebuilt from scratch on a screen change, so the tunnel has to be put
+        // back — otherwise the badge disappears until the next telemetry tick.
+        metrics.vpn = telemetry.net.vpn
 
         let size = metrics.windowSize
         let frame = CGRect(x: notch.midX - size.width / 2,
@@ -194,6 +197,10 @@ final class NotchController {
         let visible = menuBarVisible()
         cpuGlow = visible ? engine.cpuGlow : nil
         thermalGlow = visible ? engine.thermalGlow : nil
+
+        // A condition, not an Event: it never queues and never expires, it just
+        // changes what every non-Interaction state is wide enough to draw.
+        metrics.vpn = telemetry.net.vpn
 
         presentNext()
     }

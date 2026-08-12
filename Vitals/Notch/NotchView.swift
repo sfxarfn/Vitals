@@ -43,7 +43,13 @@ struct NotchView: View {
     /// animation over the two shadow layers that often is what reads as a
     /// flicker, since the geometry never moves and only the shadow gets
     /// re-rasterized.
-    private var growthKey: Int {
+    /// The badge changes the shape's width, so it has to be part of the growth
+    /// key or a tunnel coming up hard-cuts the notch wider instead of growing it.
+    /// Rare enough to be a state change in its own right — unlike the numbers
+    /// this key deliberately ignores, it does not tick.
+    private var growthKey: Int { shapeKey * 2 + (vpnWidth > 0 ? 1 : 0) }
+
+    private var shapeKey: Int {
         switch state {
         case .idle:                 0
         case .event:                1
@@ -94,7 +100,14 @@ struct NotchView: View {
                 // through it.
                 .background(shape.fill(.black))
                 .overlay(alignment: .top) {
-                    content
+                    // The badge is outboard of the state, never inside it: every
+                    // pill lays its flanks out against the camera housing, so
+                    // content has to keep the width it would have had and the
+                    // badge takes the strip the shape grew for it.
+                    HStack(spacing: 0) {
+                        content.frame(width: size.width - vpnWidth)
+                        if vpnWidth > 0 { vpnMark }
+                    }
                         .frame(width: size.width)
                         // Content is laid out at its final size the instant the
                         // state flips; the clip is what reveals it as the shape
@@ -207,6 +220,43 @@ struct NotchView: View {
             // its unmasked core down there and the blob comes back.
             .frame(width: 26, height: size.height)
             .blur(radius: glowBlur)
+    }
+
+    // MARK: VPN badge
+
+    private var vpnWidth: CGFloat { metrics.showsVPN(state) ? metrics.vpnFlank : 0 }
+
+    /// The tunnel, on the outer right edge of everything the notch says while it
+    /// is up. A hairline separates it from the state's own right flank, because
+    /// the two are unrelated: one is news with a clock on it, the other is a
+    /// condition that outlasts every pill it will sit beside.
+    ///
+    /// Peek draws its own, taller, in the network row — see `PeekView`. Not
+    /// shared: this one hugs its letters inside a one-row flank, that one tracks
+    /// the height of the pair of readings beside it.
+    private var vpnMark: some View {
+        HStack(spacing: 6) {
+            Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 14)
+            Text("VPN")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                // Filled, not just outlined: a hairline box this small on black
+                // reads as nothing at all next to a pill carrying a glyph.
+                .background {
+                    RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.12))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.35), lineWidth: 1)
+                }
+        }
+        // Its own flank, and it obeys the same rule as every other one: pinned
+        // inward, slack falling outward. Centred, the box lands in the last few
+        // points of the shape, which is exactly where `bottomCornerRadius` is
+        // curving back in and eating the border.
+        .flankSlot(metrics.vpnFlank, .trailing, pad: metrics.notchPad)
+        .frame(height: metrics.notch.height)
     }
 
     // MARK: Shared parts

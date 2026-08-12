@@ -107,13 +107,45 @@ struct NotchMetrics {
     /// is curving back in, and the outline takes 6–9pt of horizontal bite across
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
+    /// The tunnel badge on the outer right edge: the mark, the hairline that
+    /// separates it from whatever the state is saying, and the gaps around both.
+    /// The 8pt mark measures ~25 with its box, plus the hairline and the two
+    /// gaps: ~36. The rest is outward slack, and it is not padding — the bottom
+    /// corner curves back in across the last few points of every flank, and a
+    /// bordered box is a shape whose edge shows the bite.
+    var vpnFlank: CGFloat = 46
     var panelBodyHeight: CGFloat = 94
+
+    /// Whether a VPN tunnel is up. Set from telemetry rather than measured, and
+    /// the only thing in here that is not a width — it decides whether the badge
+    /// is on, and every width below follows from that.
+    var vpn = false
 
     // MARK: What a state buys
 
+    /// Whether the tunnel badge is drawn on this state. Everything but the two
+    /// Interactions: peek already says it in the network row it grew for, and the
+    /// panel is peek opened further — a second copy on the same surface.
+    func showsVPN(_ state: NotchState) -> Bool {
+        switch state {
+        case .peek, .panel: false
+        default: vpn
+        }
+    }
+
     /// The two flanks a state grows, in the order they sit on screen. Whatever
     /// this returns, the notch's own width sits untouched between them.
+    ///
+    /// The badge is added here rather than by whatever draws it, so the lean and
+    /// the hover region follow it without either having to know it exists.
     func flanks(for state: NotchState) -> Flanks {
+        var f = baseFlanks(for: state)
+        if showsVPN(state) { f.right += vpnFlank }
+        return f
+    }
+
+    /// What the state itself asks for, before the badge.
+    func baseFlanks(for state: NotchState) -> Flanks {
         switch state {
         case .idle: (0, 0)
         // A centre Event is always compact — a glyph against one short value —
@@ -177,8 +209,13 @@ struct NotchMetrics {
     /// radius 24 blurs ~36pt out, plus its 12pt drop.
     /// `statFlanks` is the widest pair any state buys — peek, the panel and the
     /// running build all sit on it, and every other family is narrower.
+    /// The badge's width is reserved here whether or not a tunnel is up: the
+    /// window's frame is set once, when the screen is found, and a VPN coming up
+    /// afterwards only changes what the shape inside it draws. Left out, the
+    /// widest badged state would eat into the shadow's slack instead of the
+    /// window growing for it.
     var windowSize: CGSize {
-        let widest = notch.width + statFlanks.left + statFlanks.right
+        let widest = notch.width + statFlanks.left + statFlanks.right + vpnFlank
         return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }
