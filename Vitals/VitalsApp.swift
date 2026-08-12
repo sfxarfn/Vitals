@@ -58,7 +58,7 @@ struct SettingsView: View {
             Section("Preview") {
                 ForEach(NotchController.previews, id: \.label) { preview in
                     Button(preview.label) {
-                        NotchController.shared?.preview(preview.mode)
+                        NotchController.shared?.preview(preview.state)
                     }
                 }
             }

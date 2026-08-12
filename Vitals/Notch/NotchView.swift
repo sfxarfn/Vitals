@@ -1,0 +1,233 @@
+import SwiftUI
+
+/// The shape itself: one black outline that grows and shrinks, whatever is
+/// inside it. What goes inside lives beside its category — `Events/`,
+/// `Activities/`, `Interactions/` — and is reached through `content` below.
+struct NotchView: View {
+    let state: NotchState
+    let metrics: NotchMetrics
+    let telemetry: Telemetry
+    /// One per notch edge. Nil is no glow on that side.
+    let cpuGlow: Signal?
+    let thermalGlow: Signal?
+    let shelf: Shelf
+    /// Sends via AirDrop, anchored on the panel's own NSView for the fallback
+    /// share sheet — the controller owns the window, so it owns that call.
+    let airDrop: ([URL]) -> Void
+    /// Moves between the two Interactions from inside them — the tray button up
+    /// to the panel, the back button down to the peek it came from. Hover alone
+    /// only ever reaches peek, and a drag is the only other way into the shelf.
+    let show: (NotchState) -> Void
+
+    // Extensions cannot add storage, so every piece of view state lives here and
+    // is read from whichever category file draws it.
+    @State var shelfTargeted = false
+    @State var airDropTargeted = false
+    @State var settingsHovered = false
+    @State var trayHovered = false
+    @State var backHovered = false
+    @State var showBattery = false
+    @State var batteryHovered = false
+
+    var size: CGSize { metrics.size(for: state) }
+    private var lifted: Bool { state != .idle }
+    private let topRadius: CGFloat = 22
+    private let bottomRadius: CGFloat = 28
+
+    // MARK: Growth
+
+    /// What the growth animates on — the state the notch is in, never the
+    /// numbers inside it. An Activity republishes its counter every second, and
+    /// a state's own numbers changing is not a state change: re-running a bouncy
+    /// animation over the two shadow layers that often is what reads as a
+    /// flicker, since the geometry never moves and only the shadow gets
+    /// re-rasterized. Compact and full events are split because they are
+    /// different widths.
+    private var growthKey: Int {
+        switch state {
+        case .idle:                 0
+        case .event(let event):     event.signal.isCompact ? 1 : 2
+        // A lone left and a lone right pill are the same width and differ only
+        // in which way they lean, so they must not share a key — growing
+        // between them would slide the shape across the notch instead of
+        // closing and opening. Both sides up is a third shape again.
+        case .sided(let l, let r):  l != nil && r != nil ? 10 : (l != nil ? 9 : 8)
+        case .accessory:            3
+        case .audioLost:            4
+        case .building:             5
+        case .peek:                 6
+        case .panel:                7
+        }
+    }
+
+    /// Every other state is centred on the notch and flares both ways. A pill
+    /// growing out of one edge only pins the edge it is not growing from, so the
+    /// box slides half its own overhang the other way. Interpolates with the
+    /// width under the same growth, which is what makes it read as growing
+    /// sideways rather than growing and then sliding. Both sides live means the
+    /// shape is symmetric again, so it recentres as the second one arrives.
+    private var xOffset: CGFloat {
+        guard case .sided(let left, let right) = state else { return 0 }
+        let overhang = (size.width - metrics.notch.width) / 2
+        switch (left, right) {
+        case (.some, .none): return -overhang
+        case (.none, .some): return overhang
+        default:             return 0
+        }
+    }
+
+    private var shape: NotchShape {
+        NotchShape(topCornerRadius: topRadius,
+                   bottomCornerRadius: state == .idle ? 10 : bottomRadius)
+    }
+
+    // MARK: Body
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // The sized box is its own stable view — a Color, not the state
+            // switch. Hanging the frame off `content` instead makes the whole
+            // thing change identity on every state change, and SwiftUI hard-cuts
+            // to the new size and only cross-fades. This way the frame
+            // interpolates and the box actually grows and shrinks.
+            Color.clear
+                // The shape flares outward by topRadius per side, so the
+                // body lines up with the notch only if the frame is wider.
+                .frame(width: size.width + topRadius * 2, height: size.height)
+                // Opaque black in every state so the panel reads as an
+                // extension of the bezel instead of showing the desktop
+                // through it.
+                .background(shape.fill(.black))
+                .overlay(alignment: .top) {
+                    content
+                        .frame(width: size.width)
+                        // Content is laid out at its final size the instant the
+                        // state flips; the clip is what reveals it as the shape
+                        // grows. Without this it interpolates too, and every
+                        // frame of the growth re-runs the whole content's layout
+                        // at a new width — text scale-fitting, the panel's
+                        // ScrollView, all of it, ~50 times per growth.
+                        // Scoped to growthKey so anything animating on its own
+                        // clock in here — the audio-lost turnover, the battery
+                        // swap — is untouched. Every fade that *does* fire on a
+                        // state change must now carry its own `.animation()`, or
+                        // this nils it into a hard cut.
+                        .transaction(value: growthKey) { $0.animation = nil }
+                }
+                .clipShape(shape)
+                // Grown states lift off the bezel; idle is flush with it, so no
+                // shadow there. Two layers, the way glass casts: a tight contact
+                // shadow at the edge plus a wide diffuse ambient one. Radii and
+                // opacities interpolate with the growth.
+                //
+                // Cast off a bare copy of the shape behind the clipped box, not
+                // off the box itself: the blur source is then a solid path with
+                // no content in it, so a build republishing its counter every
+                // second no longer re-blurs two full-window offscreen passes.
+                .background {
+                    shape.fill(.black)
+                        .shadow(color: .black.opacity(lifted ? 0.55 : 0),
+                                radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
+                        .shadow(color: .black.opacity(lifted ? 0.35 : 0),
+                                radius: lifted ? 24 : 0, y: lifted ? 12 : 0)
+                }
+                // Behind the black shape and outside its clip, so only the half
+                // that escapes past each edge is ever seen — that overlap is
+                // what reads as light leaking out rather than a colored border.
+                .background {
+                    ZStack {
+                        glowBar(thermalGlow).offset(x: -glowInset)
+                        glowBar(cpuGlow).offset(x: glowInset)
+                    }
+                }
+                // States that last twenty minutes must not announce themselves;
+                // fading is the whole difference between a glow and a pill.
+                .animation(.easeInOut(duration: 0.5), value: [thermalGlow, cpuGlow])
+                // Last, so it moves the shape, its shadows and its glows as one
+                // piece rather than shifting the box out from under them.
+                .offset(x: xOffset)
+            Spacer(minLength: 0)
+        }
+        .frame(width: metrics.windowSize.width, height: metrics.windowSize.height, alignment: .top)
+        .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: growthKey)
+        // The shelf is what the panel is for; a battery row left up from the
+        // last hover would greet the next drag with the wrong one.
+        .onChange(of: state) { if state == .idle { showBattery = false } }
+    }
+
+    // MARK: Content
+
+    /// One state, one drawing, each defined next to the category it belongs to.
+    /// The fades live here rather than inside them, so the whole timing table is
+    /// one column: content that has to clear a growing shape waits 0.06s, and
+    /// the panel — the only state with a body to fill — takes longer to arrive.
+    @ViewBuilder private var content: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+
+        // Events.
+        case .sided(let left, let right):
+            sidedPill(left, right).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .event(let event) where event.signal.isCompact:
+            compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .event(let event):
+            eventPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .accessory(let accessory):
+            accessoryPill(accessory).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .audioLost:
+            audioLostPill.transition(.opacity.animation(.easeOut(duration: 0.2)))
+
+        // Activity.
+        case .building(let build):
+            buildPill(build).transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+
+        // Interactions.
+        case .peek:
+            peekContent.transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+        case .panel:
+            panelContent.transition(.opacity.animation(.easeOut(duration: 0.28).delay(0.06)))
+        }
+    }
+
+    // MARK: Glow
+
+    /// Where each bar's centre sits — *inside* the straight edge, so the black
+    /// shape covers the bar itself and only the blur's tail clears the flare.
+    /// A source you can see is a smudge sitting next to the notch; a source you
+    /// can't is light coming from behind it.
+    ///
+    /// Calibration knob, and it moves against `glowBlur`: further in or a
+    /// tighter blur and nothing escapes at all, further out and the bright core
+    /// crosses the edge and detaches again.
+    private var glowInset: CGFloat { size.width / 2 - 6 }
+    private let glowBlur: CGFloat = 20
+
+    private func glowBar(_ signal: Signal?) -> some View {
+        Capsule()
+            // `glowTint`, not `tint`: the edge is orange or dark, never red.
+            .fill(signal?.glowTint ?? .clear)
+            // Exactly the shape's height, never more: the blur already carries
+            // the spill past the bottom corner, whereas an overhanging bar puts
+            // its unmasked core down there and the blob comes back.
+            .frame(width: 26, height: size.height)
+            .blur(radius: glowBlur)
+    }
+
+    // MARK: Shared parts
+
+    /// Shared by the accessory Event and the build Activity. The floor keeps 1%
+    /// a ring rather than a dot; the ease is what makes a build's arc creep
+    /// instead of jumping a step per poll.
+    func ring(_ fraction: Double, tint: Color) -> some View {
+        ZStack {
+            Circle().stroke(.white.opacity(0.18), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: max(0.03, min(1, fraction)))
+                .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 20, height: 20)
+        .animation(.easeOut(duration: 0.5), value: fraction)
+    }
+}

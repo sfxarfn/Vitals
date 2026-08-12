@@ -9,7 +9,7 @@ final class NotchController {
     /// this, so the running controller publishes itself.
     private(set) static var shared: NotchController?
 
-    private(set) var mode: NotchMode = .idle
+    private(set) var state: NotchState = .idle
     private(set) var metrics = NotchMetrics(notch: .zero)
     private(set) var cpuGlow: Signal?
     private(set) var thermalGlow: Signal?
@@ -28,13 +28,15 @@ final class NotchController {
     private var eventDismiss: Timer?
     private let accessories = AccessoryWatcher()
     private let builds = BuildWatcher()
-    private var queue: [NotchMode] = []
-    /// The one-sided pills currently up, keyed by the edge they grew out of, and
-    /// a dismiss timer each. Two flanks, two subsystems, two clocks: a left pill
-    /// arriving while a right one is up joins it rather than waiting behind it,
-    /// and each leaves when its own 2.6s is spent.
-    private var sided: [PillAnchor: Event] = [:]
-    private var sidedDismiss: [PillAnchor: Timer] = [:]
+    /// Events waiting for the notch, in the order they arrived.
+    private var queue: [NotchState] = []
+    /// The one-sided Events currently up, keyed by the side they own, and a
+    /// dismiss timer each. Two flanks, two subsystems, two clocks: Events on
+    /// different sides show at once, so a left pill arriving while a right one
+    /// is up joins it rather than waiting behind it, and each leaves when its
+    /// own 2.6s is spent.
+    private var sided: [Side: Event] = [:]
+    private var sidedDismiss: [Side: Timer] = [:]
     private let dragPasteboard = NSPasteboard(name: .drag)
     private var dragBaseline = -1
     // Global monitors go deaf once the pointer is over our own window, and a
@@ -63,11 +65,11 @@ final class NotchController {
         }
         accessories.start()
 
-        // A build is a state, not an event: it takes over the resting notch and
-        // gives it back when the build ends, so nothing here queues.
+        // A build is an Activity, not an Event: it replaces idle as the resting
+        // state and hands it back when the work ends, so nothing here queues.
         builds.onChange = { [weak self] in
             guard let self, atRest else { return }
-            mode = resting
+            state = resting
         }
         builds.start()
 
@@ -153,8 +155,9 @@ final class NotchController {
         return panel
     }
 
-    /// Q13: when the menu bar is hidden the notch is someone's content. Tier-2
-    /// pills still draw; the resting glow and hover panel do not.
+    /// When the menu bar is hidden the notch is someone's content — fullscreen,
+    /// which is also when builds run and when the machine stalls. Events still
+    /// draw over it; the resting glow and the hover states do not.
     /// ponytail: layer-24 probe, swap for a real fullscreen observer if it misreads.
     private func menuBarVisible() -> Bool {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
@@ -162,7 +165,7 @@ final class NotchController {
         return list.contains { ($0[kCGWindowLayer as String] as? Int) == 24 }
     }
 
-    // MARK: Telemetry → events
+    // MARK: Telemetry → Events
 
     private func evaluate() {
         let p = telemetry.power, s = telemetry.stall
@@ -177,9 +180,10 @@ final class NotchController {
             loadFinished: telemetry.loadFinished
         )
 
-        queue.append(contentsOf: engine.update(reading).map(NotchMode.event))
+        queue.append(contentsOf: engine.update(reading).map(NotchState.event))
 
-        // Q13: the glow is resting decoration, so it goes when the menu bar does.
+        // The glow is residue on a resting notch, so it goes when the menu bar
+        // does.
         // ponytail: re-read on the telemetry tick only, so entering fullscreen
         // leaves a glow up for one poll. Add a fullscreen observer if that shows.
         let visible = menuBarVisible()
@@ -189,56 +193,62 @@ final class NotchController {
         presentNext()
     }
 
-    /// What the notch falls back to when nothing is being shown. Idle, unless a
-    /// build is running — then the build pill is the floor.
-    private var resting: NotchMode { builds.progress.map(NotchMode.building) ?? .idle }
+    /// The floor the notch falls back to. Idle, unless an Activity is running —
+    /// a build replaces idle as the resting state for as long as it lasts.
+    private var resting: NotchState { builds.progress.map(NotchState.building) ?? .idle }
 
     private var atRest: Bool {
-        switch mode {
+        switch state {
         case .idle, .building: true
         default: false
         }
     }
 
     private var showingSided: Bool {
-        if case .sided = mode { return true }
+        if case .sided = state { return true }
         return false
     }
 
+    // MARK: Arbitration
+
     private func presentNext() {
-        // Walks the queue rather than taking one: a one-sided pill can go up
-        // beside another one, so several entries may be presentable at once.
+        // Walks the queue rather than taking one: Events on different sides show
+        // at once, so several entries may be presentable on the same pass.
         // Anything that owns the whole notch still stops the walk — it has to
         // wait for the flanks to clear, and for the ones behind it to keep their
         // order behind it.
         while let next = queue.first {
-            if case .event(let event) = next, event.signal.anchor != .center {
-                guard atRest || showingSided, sided[event.signal.anchor] == nil else { return }
+            if case .event(let event) = next, event.signal.side != .center {
+                guard atRest || showingSided else { return }
                 queue.removeFirst()
-                present(event, on: event.signal.anchor)
+                present(event, on: event.signal.side)
                 continue
             }
             guard atRest else { return }
             queue.removeFirst()
-            presentFull(next)
+            presentAlone(next)
             return
         }
     }
 
-    private func present(_ event: Event, on anchor: PillAnchor) {
-        sided[anchor] = event
-        mode = .sided(left: sided[.left], right: sided[.right])
-        sidedDismiss[anchor] = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
+    /// One Event into one flank. A side already speaking is replaced rather than
+    /// queued behind: two Events on one side are the same subsystem talking
+    /// twice, and the newer thing it has to say is the true one.
+    private func present(_ event: Event, on side: Side) {
+        sidedDismiss[side]?.invalidate()
+        sided[side] = event
+        state = .sided(left: sided[.left], right: sided[.right])
+        sidedDismiss[side] = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 // The flank is released whether or not these pills are still the
                 // thing on screen — this timer is the only owner of the slot, so
-                // bailing out early strands it and every later event anchored
-                // there queues up behind a flank that never frees.
-                self.sided[anchor] = nil
-                self.sidedDismiss[anchor] = nil
+                // bailing out early strands it and leaves a side marked busy
+                // that nothing will ever free.
+                self.sided[side] = nil
+                self.sidedDismiss[side] = nil
                 if self.showingSided {
-                    self.mode = self.sided.isEmpty ? self.resting
+                    self.state = self.sided.isEmpty ? self.resting
                                                    : .sided(left: self.sided[.left], right: self.sided[.right])
                 }
                 self.presentNext()
@@ -255,14 +265,17 @@ final class NotchController {
         sided.removeAll()
     }
 
-    private func presentFull(_ next: NotchMode) {
-        mode = next
+    /// A state that owns the whole notch for its lifetime and then hands it
+    /// straight back — to the Activity it borrowed it from if that is still
+    /// running, and to idle if the work finished meanwhile.
+    private func presentAlone(_ next: NotchState) {
+        state = next
         eventDismiss?.invalidate()
         eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 // Only the pill this timer was armed for may be taken down by
                 // it. Anything that happened since — a hover, a sided pill, the
-                // next preview — owns the notch now, and clearing the mode out
+                // next preview — owns the notch now, and clearing the state out
                 // from under it strands that state's bookkeeping: a hover left
                 // with the panel still taking the mouse, a flank whose slot is
                 // never released.
@@ -272,8 +285,8 @@ final class NotchController {
                 // real build *is* the resting state and is never presented this
                 // way, so it holds; a previewed one is, so it times out like
                 // every other pill.
-                guard let self, self.mode == next else { return }
-                self.mode = self.resting
+                guard let self, self.state == next else { return }
+                self.state = self.resting
                 self.presentNext()
             }
         }
@@ -289,12 +302,12 @@ final class NotchController {
 
     // MARK: Demo
 
-    /// Every pill the notch can show, one entry each, so a layout change can be
-    /// eyeballed without waiting on the hardware to misbehave. Tier-1 signals
-    /// are absent on purpose: they glow an edge for as long as they hold rather
+    /// Every state the notch can show, one entry each, so a layout change can be
+    /// eyeballed without waiting on the hardware to misbehave. Glow-only signals
+    /// are absent on purpose: they light an edge for as long as they hold rather
     /// than presenting, so there is nothing to fire.
-    static let previews: [(label: String, mode: NotchMode)] =
-        Signal.allCases.filter { $0.tier == .two }
+    static let previews: [(label: String, state: NotchState)] =
+        Signal.allCases.filter { $0.loudness == .pill }
             .map { ($0.title, .event(Event(signal: $0))) }
         + Signal.allCases.filter(\.announcesRecovery)
             .map { ($0.recoveryTitle, .event(Event(signal: $0, recovered: true))) }
@@ -314,18 +327,18 @@ final class NotchController {
                       ending: ending)
     }
 
-    func preview(_ mode: NotchMode) {
-        queue.append(mode)
+    func preview(_ state: NotchState) {
+        queue.append(state)
         // Whatever is up loses: pressing a second button is a request to see
-        // that pill now, not after the current one times out. Flanks are the
-        // exception — they are the thing you press two buttons to see together,
-        // so the queue gets first refusal. A press that drains nothing was
-        // blocked by what is up (an occupied flank, a pill mid-life), and that
-        // is exactly the case where the notch has to be cleared for it — the
-        // button has to do something visible every single time it is pressed.
+        // that state now, not after the current one times out. Sided Events are
+        // the exception — they are the thing you press two buttons to see
+        // together, so the queue gets first refusal. A press that drains nothing
+        // was blocked by something owning the whole notch, and that is exactly
+        // the case where it has to be cleared for it: the button has to do
+        // something visible every single time it is pressed.
         let queued = queue.count
         if atRest || showingSided { presentNext() }
-        if queue.count == queued { collapse() }
+        if queue.count == queued { shrink() }
     }
 
     // MARK: Files
@@ -334,12 +347,12 @@ final class NotchController {
         AirDropper.shared.send(urls, from: window?.contentView)
     }
 
-    /// A collapsed notch cannot be a drag destination — the panel is
+    /// A notch at rest cannot be a drag destination — the panel is
     /// mouse-transparent and notch-sized, so AppKit never offers it the drag.
     /// Watching the drag pasteboard is what lets the shelf open under the
     /// cursor; from there the panel is live and SwiftUI's own drop takes over.
     private func dragMoved() {
-        guard atRest || mode == .peek, dragBaseline != -1,
+        guard atRest || state == .peek, dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
               let notch = notchRect, notch.contains(NSEvent.mouseLocation),
               menuBarVisible() else { return }
@@ -347,7 +360,7 @@ final class NotchController {
         // so the payload still has to be something the shelf can hold.
         guard dragPasteboard.canReadObject(forClasses: [NSURL.self],
                                            options: [.urlReadingFileURLsOnly: true]) else { return }
-        expand()
+        grow()
     }
 
     // MARK: Hover
@@ -372,21 +385,22 @@ final class NotchController {
         guard let screen, let notch = notchRect else { return }
         let p = NSEvent.mouseLocation
 
-        if mode == .expanded || mode == .peek {
+        if state == .panel || state == .peek {
             // Whichever shape is on screen is the region to stay inside; peek is
             // a good deal smaller than the panel.
-            let grown = metrics.size(for: mode)
+            let grown = metrics.size(for: state)
             let rect = CGRect(x: screen.frame.midX - grown.width / 2,
                               y: screen.frame.maxY - grown.height,
                               width: grown.width, height: grown.height)
             // Straying outside mid-drag must not slam the shelf shut with the
             // file still in hand — only a mouse-up ends the drag.
             if !rect.insetBy(dx: -8, dy: -8).contains(p),
-               Date.now.timeIntervalSince(lastDrag) > 0.5 { collapse() }
+               Date.now.timeIntervalSince(lastDrag) > 0.5 { shrink() }
             return
         }
 
-        // Q10: a dwell delay, or the panel fires every time you reach for the menu bar.
+        // An Interaction needs a dwell delay, or peek fires every time the
+        // pointer crosses the notch on its way to the menu bar.
         guard notch.contains(p), menuBarVisible(), atRest else {
             dwell?.invalidate(); dwell = nil
             return
@@ -395,28 +409,29 @@ final class NotchController {
         dwell = Timer.scheduledTimer(withTimeInterval: Self.dwellDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, notch.contains(NSEvent.mouseLocation), self.atRest else { return }
-                self.expand(.peek)
+                self.grow(.peek)
             }
         }
     }
 
-    /// Both grown states take the mouse — peek has the gear to click. The global
-    /// monitor goes deaf while the pointer is over the panel, but it hears the
-    /// move that leaves it, which is the one collapse needs.
-    private func expand(_ next: NotchMode = .expanded) {
+    /// Into an Interaction. Both of them take the mouse — peek has the gear to
+    /// click. The global monitor goes deaf while the pointer is over the panel,
+    /// but it hears the move that leaves it, which is the one `shrink` needs.
+    func grow(_ next: NotchState = .panel) {
         dwell?.invalidate(); dwell = nil
-        mode = next
-        // Both grown states show live numbers now — peek's CPU readout would sit
-        // up to 10s stale on the resting poll, which is longer than a hover.
-        telemetry.expanded = true
+        state = next
+        // Both Interactions show live numbers — peek's CPU readout would sit up
+        // to 10s stale on the resting poll, which is longer than a hover.
+        telemetry.grown = true
         window?.ignoresMouseEvents = false
     }
 
-    func collapse() {
+    /// Back to the floor: idle, or the Activity still running under it.
+    func shrink() {
         dwell?.invalidate(); dwell = nil
         clearSided()
-        mode = resting
-        telemetry.expanded = false
+        state = resting
+        telemetry.grown = false
         window?.ignoresMouseEvents = true
         presentNext()
     }
@@ -426,18 +441,19 @@ private struct NotchRoot: View {
     @Bindable var controller: NotchController
 
     var body: some View {
-        NotchView(mode: controller.mode,
+        NotchView(state: controller.state,
                   metrics: controller.metrics,
                   telemetry: controller.telemetry,
                   cpuGlow: controller.cpuGlow,
                   thermalGlow: controller.thermalGlow,
                   shelf: controller.shelf,
-                  airDrop: controller.airDrop)
+                  airDrop: controller.airDrop,
+                  show: controller.grow)
             .contextMenu {
                 SettingsLink { Text("Settings…") }
                 Divider()
                 Button("Quit Vitals") { NSApp.terminate(nil) }
             }
-            .onExitCommand { controller.collapse() }
+            .onExitCommand { controller.shrink() }
     }
 }

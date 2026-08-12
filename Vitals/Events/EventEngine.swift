@@ -1,11 +1,16 @@
 import Foundation
 import SwiftUI
 
-/// Loudness. Tier 1 glows the notch edge; tier 2 drops the pill open and auto-hides.
-enum Tier { case one, two }
+/// How loud a signal is allowed to be. A `pill` interrupts once and leaves; a
+/// `glow` never interrupts, it just lights the notch edge for as long as the
+/// condition holds. Loudness is a property of the signal's *type*, not its
+/// severity — a state that lasts twenty minutes cannot pop open for twenty
+/// minutes, however bad it is.
+enum Loudness { case glow, pill }
 
-/// Which notch edge a tier-2 pill grows out of. See `Signal.anchor`.
-enum PillAnchor { case center, left, right }
+/// Which side of the notch an Event owns. Centre spreads one message across
+/// both flanks; the others grow one edge only. See `Signal.side`.
+enum Side { case center, left, right }
 
 /// A flattened view of telemetry. Every signal is a number with two thresholds,
 /// which keeps the engine free of per-signal special cases.
@@ -22,18 +27,33 @@ struct Reading {
     var loadFinished = false
 }
 
+/// Everything the machine can say about itself, by the subsystems `product.md`
+/// groups Events under. `loudness` says whether a signal earns a pill or only an
+/// edge; `side` says which edge.
 enum Signal: String, CaseIterable {
-    case netNegativeOnAC, charged, loadFinished, pressureCritical, thermalSerious
-    case chargerDisconnected, pressureWarn, cpuSustained, swapGrowth, thermalWarm
+    // Power.
+    case netNegativeOnAC, charged, chargerDisconnected
+    // Thermal — one ladder, warm from 80° and hot from 85°.
+    case thermalWarm, thermalSerious
+    // CPU: the load going up, and the load letting go.
+    case cpuSustained, loadFinished
+    // Memory. Not in `product.md`'s Event list — the pill still fires.
+    case pressureWarn, pressureCritical, swapGrowth
 
-    var tier: Tier {
+    /// Only the crossings you can act on are worth a pill. The rest hold too
+    /// long to interrupt for and light an edge instead — though three of them
+    /// (`chargerDisconnected`, `pressureWarn`, `swapGrowth`) light nothing
+    /// today, because there are two edges and heat and load already own them.
+    var loudness: Loudness {
         switch self {
         case .netNegativeOnAC, .charged, .loadFinished,
-             .pressureCritical, .thermalSerious: .two
+             .pressureCritical, .thermalSerious: .pill
         case .chargerDisconnected, .pressureWarn, .cpuSustained,
-             .swapGrowth, .thermalWarm: .one
+             .swapGrowth, .thermalWarm: .glow
         }
     }
+
+    // MARK: Thresholds
 
     /// Asserts above the first number, clears below the second. Equal means no
     /// hysteresis, which is fine for signals the OS already debounces.
@@ -85,6 +105,8 @@ enum Signal: String, CaseIterable {
         }
     }
 
+    // MARK: How it looks
+
     var symbol: String {
         switch self {
         case .netNegativeOnAC:      "exclamationmark.triangle.fill"
@@ -133,6 +155,8 @@ enum Signal: String, CaseIterable {
     /// for it, on the glyph and the pill.
     var glowTint: Color { self == .thermalSerious ? .orange : tint }
 
+    // MARK: How it presents
+
     /// Says everything in a glyph and one number, so it wears the accessory
     /// pill's width and layout instead of the full event pill's — the number
     /// carries more than the word would ("48°", not "Cooled down").
@@ -150,13 +174,15 @@ enum Signal: String, CaseIterable {
     /// the news is. Side is identity, not decoration: thermal always arrives on
     /// the left and stays there through its own all-clear, so a glance at which
     /// edge moved already says which subsystem is talking.
-    var anchor: PillAnchor {
+    var side: Side {
         switch self {
         case .loadFinished:   .right
         case .thermalSerious: .left
         default:              .center
         }
     }
+
+    // MARK: Recovery
 
     /// Whether clearing deserves a pill of its own. Only the two stall states
     /// qualify: they are the ones you stop and wait out, so "you can go back to
@@ -208,8 +234,10 @@ struct Event: Equatable {
     var tint: Color { recovered ? .green : signal.tint }
 }
 
+// MARK: - Engine
+
 /// Tracks which signals are asserted, applies hysteresis, and rate-limits the
-/// tier-2 presentations so a flapping signal cannot machine-gun the notch.
+/// pill presentations so a flapping signal cannot machine-gun the notch.
 struct EventEngine {
     static let cooldown: TimeInterval = 300
 
@@ -221,7 +249,7 @@ struct EventEngine {
     private var presented: Set<Signal> = []
     private var primed = false
 
-    /// Returns the tier-2 events that should be presented on this tick.
+    /// Returns the Events that should be presented on this tick.
     mutating func update(_ r: Reading, now: Date = Date()) -> [Event] {
         // The first reading is a baseline, not news. Every signal here is a
         // crossing, and nothing has crossed yet — without this the app announces
@@ -249,7 +277,7 @@ struct EventEngine {
                 fired.append(contentsOf: owed.map { Event(signal: $0, recovered: true) })
             } else if v > on {
                 active.insert(s)
-                guard s.tier == .two else { continue }
+                guard s.loudness == .pill else { continue }
                 if let last = lastFired[s], now.timeIntervalSince(last) < Self.cooldown { continue }
                 lastFired[s] = now
                 presented.insert(s)
@@ -259,8 +287,13 @@ struct EventEngine {
         return fired
     }
 
-    /// The two resting glows, one per notch edge, each on the same side as the
-    /// stat peek shows for it — so a side always means one thing.
+    // MARK: Glow
+
+    /// The residue an Event leaves behind. The pill announces the crossing and
+    /// goes; while the condition under it is still true the edge nearest that
+    /// subsystem stays lit, until its all-clear. One edge each, on the same side
+    /// as the stat peek shows for it — heat left, load right — so a side always
+    /// means one thing.
     var cpuGlow: Signal? { active.contains(.cpuSustained) ? .cpuSustained : nil }
 
     /// The thermal level: warm from 80°, hot from 85°, nil once the die is back
@@ -272,6 +305,8 @@ struct EventEngine {
         return active.contains(.thermalWarm) ? .thermalWarm : nil
     }
 }
+
+// MARK: - Self-check
 
 #if DEBUG
 enum EventEngineSelfCheck {
@@ -320,14 +355,14 @@ enum EventEngineSelfCheck {
 
         // Hysteresis: CPU sustained holds between 30s and 60s.
         var h = primed()
-        assert(h.update(Reading(cpuSustainedSeconds: 61), now: t0) == [])          // tier 1, never fires
+        assert(h.update(Reading(cpuSustainedSeconds: 61), now: t0) == [])          // glow only, never fires
         assert(h.active.contains(.cpuSustained))
         _ = h.update(Reading(cpuSustainedSeconds: 45), now: t0)
         assert(h.active.contains(.cpuSustained), "must not clear inside the hysteresis band")
         _ = h.update(Reading(cpuSustainedSeconds: 10), now: t0)
         assert(!h.active.contains(.cpuSustained))
 
-        // A tier-1 signal that clears announces nothing, recovery or otherwise.
+        // A glow-only signal that clears announces nothing, recovery or otherwise.
         _ = h.update(Reading(cpuSustainedSeconds: 61), now: t0)
         assert(h.update(Reading(cpuSustainedSeconds: 0), now: t0).isEmpty)
 

@@ -146,8 +146,11 @@ final class Telemetry {
     /// Fires whenever any source produces fresh numbers.
     var onUpdate: (() -> Void)?
 
-    // Q8: push where the OS offers it, poll only CPU.
-    var expanded = false { didSet { if expanded != oldValue { restartTimer() } } }
+    /// True while the notch is showing an Interaction, which is the only time
+    /// anything here is being read at a glance — the poll goes to 1s for it and
+    /// back to 10s the moment the notch shrinks. A power monitor must not cost
+    /// power: push where the OS offers it, poll only CPU.
+    var grown = false { didSet { if grown != oldValue { restartTimer() } } }
 
     func start() {
         sampleAll()
@@ -181,7 +184,7 @@ final class Telemetry {
 
     private func restartTimer() {
         timer?.invalidate()
-        let interval: TimeInterval = expanded ? 1 : 10
+        let interval: TimeInterval = grown ? 1 : 10
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.sampleAll()
             self?.onUpdate?()
@@ -191,10 +194,14 @@ final class Telemetry {
         timer = t
     }
 
+    // MARK: Sampling
+
     private func sampleAll() {
         samplePower()
         sampleStall()
     }
+
+    // MARK: Power
 
     // MARK: Power
 
@@ -286,6 +293,8 @@ final class Telemetry {
         let mAh = (p["AppleRawCurrentCapacity"] as? NSNumber)?.doubleValue ?? 0
         return (external ? signed : -abs(signed), mV, mAh)
     }
+
+    // MARK: Stall risk
 
     // MARK: Stall risk
 
