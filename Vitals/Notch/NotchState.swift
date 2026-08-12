@@ -10,7 +10,10 @@ enum NotchState: Equatable {
 
     // MARK: Events
 
-    /// One message across both flanks: glyph on one side, title on the other.
+    /// One Event owning the whole notch: glyph in one flank, its value in the
+    /// other. Only a centre Signal reaches this — everything with a side is
+    /// routed to `sided` before it gets here — and every centre Signal is
+    /// compact, so `compactPill` is the one thing that draws it.
     case event(Event)
     /// One Event per flank, each on the side its subsystem owns. They speak for
     /// different subsystems, so neither has any reason to evict the other —
@@ -63,8 +66,10 @@ struct NotchMetrics {
     /// not use falls outward against the bezel instead. See `flankSlot`.
     var notchPad: CGFloat = 4
     /// A lone glyph, a ring, or a short reading: the compact event pill, the
-    /// accessory pill, the audio handoff. Ceiling is "100%" at 12pt, 35pt — the
-    /// value side, not the glyph side. The widest glyph any of them draws is
+    /// accessory pill, the audio handoff. Ceiling is "100°" at 12pt, the hottest
+    /// the thermal pill can read — the value side, not the glyph side. The
+    /// battery pill used to set it at "100%" and no longer can: full says "Full",
+    /// and charging is gated under 95%. The widest glyph any of them draws is
     /// `battery.100percent.bolt` at 29pt, which fits inside that.
     var glyphFlank: CGFloat = 40
     /// The sided pills fit a glyph *and* its value in one flank, so they need
@@ -96,16 +101,10 @@ struct NotchMetrics {
     ///
     /// Ceiling is "Success" at 8pt, level with "Archive" and "Analyze" on the
     /// left and wider than either glyph. The other 18 is clearance, not padding:
-    /// a stacked flank
-    /// puts its word on the bottom row, where `bottomCornerRadius` is curving
-    /// back in, and the outline takes 6–9pt of horizontal bite across the
-    /// letters. Sized to the word alone, the last one gets shaved off.
+    /// a stacked flank puts its word on the bottom row, where `bottomCornerRadius`
+    /// is curving back in, and the outline takes 6–9pt of horizontal bite across
+    /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
-    /// The full event pill puts a whole title in a flank. Ceiling is "Load
-    /// finished" at 11pt, 73pt. Nothing draws this shape today — every Signal is
-    /// either compact or sided — so that ceiling is the longest title in the
-    /// enum rather than one measured against a pill on screen.
-    var eventFlank: CGFloat = 78
     var panelBodyHeight: CGFloat = 94
 
     // MARK: What a state buys
@@ -115,12 +114,9 @@ struct NotchMetrics {
     func flanks(for state: NotchState) -> Flanks {
         switch state {
         case .idle: (0, 0)
-        // The full pill is the widest the notch ever goes: a title in one flank
-        // and a glyph in the other. It overlaps the tail of the focused app's
-        // menus, which is accepted because it is transient and macOS offers no
-        // way to reserve the space.
-        case .event(let event):
-            event.signal.isCompact ? (glyphFlank, glyphFlank) : (eventFlank, eventFlank)
+        // A centre Event is always compact — a glyph against one short value —
+        // so it buys the same flanks the accessory pill does.
+        case .event: (glyphFlank, glyphFlank)
         // One flank per live side — see `Signal.side`. Nothing to say on the far
         // flank means nothing is bought there, so the notch leans all the way
         // and the lean is what says which subsystem is talking. A second side
@@ -177,8 +173,10 @@ struct NotchMetrics {
     /// it. The slack has to cover the shape's top flare on both sides, the lean
     /// of the widest uneven state, *and* the ambient shadow past all of it —
     /// radius 24 blurs ~36pt out, plus its 12pt drop.
+    /// `statFlanks` is the widest pair any state buys — peek, the panel and the
+    /// running build all sit on it, and every other family is narrower.
     var windowSize: CGSize {
-        let widest = notch.width + max(eventFlank * 2, statFlanks.left + statFlanks.right)
+        let widest = notch.width + statFlanks.left + statFlanks.right
         return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }

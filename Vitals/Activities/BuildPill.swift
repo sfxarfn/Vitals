@@ -20,9 +20,12 @@ extension NotchView {
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .foregroundStyle(.white.opacity(0.85))
             }
-            // Centred like the verdict's, and for the same reason: the counter
-            // and its ring opposite are wider than a verb, so hugging both
-            // leaves this side with the bigger outer gap.
+            // Balanced on the outer edges, not the inner ones. The counter and
+            // its ring opposite are ~14pt wider than this stack, so the wide
+            // side goes flush against the housing and this one floats — which
+            // lands both blocks the same distance off the bezel. Equalising the
+            // inner gaps instead would leave the outer ones 14pt apart, and
+            // those are the two edges the eye lines up here.
             .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad, centered: true)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
             HStack(spacing: 5) {
@@ -36,12 +39,9 @@ extension NotchView {
                 .foregroundStyle(.white.opacity(0.85))
                 ring(build.fraction, tint: .blue)
             }
-            // Flush against the housing, where every other flank keeps
-            // `notchPad`. What hugs the notch here is a two-line number stack at
-            // 9pt, and a pair of short rows reads as further out than a single
-            // 12pt row at the same gap — the ring on the far end is also
-            // pulling the eye outward. Giving the pad back is what puts the
-            // counter next to the housing instead of adrift beside it.
+            // Flush, where every other flank keeps `notchPad`. This is the wide
+            // side of the pair described opposite: it goes all the way in so the
+            // narrow side's float can bring both outer edges level.
             .flankSlot(metrics.statFlanks.right, .trailing, pad: 0)
         }
         .frame(height: metrics.notch.height)

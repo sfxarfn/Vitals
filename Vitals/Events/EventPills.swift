@@ -46,23 +46,6 @@ extension NotchView {
 
     // MARK: Centre
 
-    /// The whole notch: glyph in one flank, title in the other, nothing behind
-    /// the camera housing. The widest thing the notch ever draws.
-    func eventPill(_ event: Event) -> some View {
-        HStack(spacing: 0) {
-            Image(systemName: event.symbol)
-                .foregroundStyle(event.tint)
-                .flankSlot(metrics.eventFlank, .leading, pad: metrics.notchPad)
-            Spacer(minLength: 0).frame(width: metrics.notch.width)
-            Text(event.title)
-                .lineLimit(1).minimumScaleFactor(0.7)
-                .foregroundStyle(.white)
-                .flankSlot(metrics.eventFlank, .trailing, pad: metrics.notchPad)
-        }
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .frame(height: metrics.notch.height)
-    }
-
     /// Same two-flank shape as the accessory pill: tinted glyph on the left, a
     /// live number on the right, camera housing in between. A number says more
     /// than the word would and costs half the room.

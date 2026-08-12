@@ -41,12 +41,11 @@ struct NotchView: View {
     /// a state's own numbers changing is not a state change: re-running a bouncy
     /// animation over the two shadow layers that often is what reads as a
     /// flicker, since the geometry never moves and only the shadow gets
-    /// re-rasterized. Compact and full events are split because they are
-    /// different widths.
+    /// re-rasterized.
     private var growthKey: Int {
         switch state {
         case .idle:                 0
-        case .event(let event):     event.signal.isCompact ? 1 : 2
+        case .event:                1
         // A lone left and a lone right pill are the same width and differ only
         // in which way they lean, so they must not share a key — growing
         // between them would slide the shape across the notch instead of
@@ -164,10 +163,8 @@ struct NotchView: View {
         // Events.
         case .sided(let left, let right):
             sidedPill(left, right).transition(.opacity.animation(.easeOut(duration: 0.2)))
-        case .event(let event) where event.signal.isCompact:
-            compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .event(let event):
-            eventPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+            compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .accessory(let accessory):
             accessoryPill(accessory).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .audioLost:
