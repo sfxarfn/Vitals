@@ -45,17 +45,18 @@ belongs to — if it fits none of them, it does not belong in the notch.
 
 | File | Role |
 |---|---|
-| [`Telemetry.swift`](../Vitals/Events/Telemetry.swift) | Power and stall-risk sampling. Push where macOS offers it, poll only CPU. |
-| [`EventEngine.swift`](../Vitals/Events/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. Owns `Loudness` (pill or glow) and `Side`. Pure value type; has a `DEBUG` self-check. |
+| [`Telemetry.swift`](../Vitals/Events/Telemetry.swift) | Power, die temperature and CPU load. Push where macOS offers it, poll only CPU. |
+| [`EventEngine.swift`](../Vitals/Events/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. `Signal` is one case per Event `product.md` lists under Power, Thermal and CPU — nothing else. Owns `Loudness` (pill or glow) and `Side`. Pure value type; has a `DEBUG` self-check. |
 | [`Accessory.swift`](../Vitals/Events/Accessory.swift) | Bluetooth accessory connect detection and battery. |
 | [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: sided, centre, compact, accessory, audio lost. |
+| [`VerdictPill.swift`](../Vitals/Events/VerdictPill.swift) | How a finished build draws. An Event, not the tail of the Activity — the build has handed the notch back before this queues. |
 
 ### `Activities/` — work you started
 
 | File | Role |
 |---|---|
-| [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | Xcode build/archive progress, scraped off the toolbar over the Accessibility API. |
-| [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws, and the verdict it ends on. |
+| [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | Xcode build/archive progress, scraped off the toolbar over the Accessibility API. Ends by handing a verdict to `onVerdict`, which the controller queues as an Event. |
+| [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws. |
 
 ### `Interactions/` — you reached for it
 
@@ -76,8 +77,15 @@ accessory-policy app, the Settings scene, and the debug self-checks.
   that, or the new state gets clipped.
 - **The notch's own width is dead space.** The camera housing sits over it, so
   every layout puts content in the two flanks and leaves the middle empty. Each
-  flank hugs the notch and the slack falls outward — `flankSlot` is the only
-  place that decides this, so nothing lays out a flank by hand.
+  flank hugs the notch and the slack falls outward, unless it asks to be
+  centred — `flankSlot` is the only place that decides either, so nothing lays
+  out a flank by hand. Optical corrections to the *glyph* — a fixed box, a
+  rotation, a point of offset — are not that: they live in the content, above
+  the `flankSlot` call, and `design.md` lists them as the third lever.
+- **`Signal` is closed to `product.md`'s Event list.** A reading the notch never
+  says anything about is not a Signal — it was sampled, thresholded and thrown
+  away, and five of those were deleted once. Add the doc entry first, then the
+  case; `Telemetry` only samples what some Signal reads.
 - **`NotchView` is one type across five files.** Extensions cannot add storage,
   so every `@State` is declared in `NotchView.swift` and is internal, not
   private, because the category files read it.
