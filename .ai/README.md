@@ -7,14 +7,22 @@ and [`steering/design.md`](steering/design.md) before proposing anything; most
 The steering docs are the **target**, not a description of the code. Where the
 two disagree, the code is what has to move.
 
-`product.md` was rebuilt from an older doc that is no longer in the tree. Two
+`product.md` was rebuilt from an older doc that is no longer in the tree. Three
 things it settled are still binding and are not written down anywhere else:
-**Vitals cannot be sandboxed** (reading Xcode's toolbar needs the Accessibility
-grant, which a sandboxed app can never hold — `ENABLE_APP_SANDBOX` stays `NO` in
-both configs), and **classic Bluetooth headsets cannot report battery** (only
-BLE answers the GATT Battery Service; the rest is a private framework). Neither
-is worth re-investigating. The full old doc, including what was cut and why, is
-in git history: `git show d02f2ba:.ai/steering/product.md`.
+
+- **Vitals cannot be sandboxed.** Reading Xcode's toolbar needs the Accessibility
+  grant, which a sandboxed app can never hold — `ENABLE_APP_SANDBOX` stays `NO`
+  in both configs.
+- **Classic Bluetooth headsets cannot report battery.** Only BLE answers the GATT
+  Battery Service; the rest is a private framework.
+- **Memory pressure is not watched, and the omission is the finding.** The
+  original doc named it as this machine's daily pain. It is not — thermal is.
+  Five memory Signals were sampled, thresholded and deleted, and nothing in the
+  app reads memory today. Re-adding it means re-testing the premise first, not
+  re-reading this note.
+
+None is worth re-investigating. The full old doc, including what was cut and why,
+is in git history: `git show d02f2ba:.ai/steering/product.md`.
 
 ## Documents
 

@@ -11,8 +11,9 @@ Single user, single machine. Not a product, not shipped, no App Store.
 ## Who it's for
 
 One developer, working in Xcode on a fanless 16GB M3 Air, whose real daily pain
-is the machine stalling under memory pressure and thermal throttling before a
-build finishes.
+is the machine throttling itself before a build finishes. Fanless is the whole
+problem: the die climbs, the clocks come down, and nothing on screen says so.
+Memory pressure was the original guess at this and turned out not to be it.
 
 ## Notch State
 
@@ -61,11 +62,16 @@ which subsystem is talking before you read anything.
   - **Generic Accessory Connected** — everything else, drawn by what kind of thing it is
     - with Battery — the level arrives with it, shown as a ring
     - without Battery — no level to report, so the Bluetooth mark stands in
-  - **Audio Changed** — sound moved to a different output; the speaker glyph carries
-    its own wave count, so the loudness reads off the icon rather than a number
+  - **Audio Lost** — sound fell off a headset back onto the built-in speakers.
+    You did not choose this; the battery did, and the room can hear you now. The
+    speaker glyph's wave count carries the output volume, because how loudly is
+    half the news. An output you switched to yourself is not filed here — you
+    already know, and a pill for it would be noise.
 - **Xcode**
-  - **Build Canceled** — the run ended without producing anything, so there is
-    nothing to come back to
+  - **Build Failed** — the run ended without producing anything, so there is
+    nothing to come back to. A run you cancelled yourself is filed here too:
+    you already know you stopped it, and a verdict of its own would be a third
+    word and a third glyph spent on news nobody was waiting for.
   - **Build Succeeded** — the run you walked away from is done; this is the pill
     that says the machine is yours again
 
