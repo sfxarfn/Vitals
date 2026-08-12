@@ -45,6 +45,14 @@ which subsystem is talking before you read anything.
 - **Panel** — peek opens downward into a surface you can actually work in
   - **File Tray** — a drop box that holds files and hands them to AirDrop
   - **Battery Status** — the numbers behind peek's one-line summary
+  - **Thermal Detail** — the die behind peek's one rounded degree: where the
+    heat sits (P-cores, E-cores, GPU), how many degrees are left before the
+    machine starts paying in clocks, and how much room memory has left.
+    Reached by clicking peek's left flank, the same way the battery row is
+    reached by clicking peek's summary — a stat you glanced at, opened up.
+    Memory appears *here and only here*: it is a number you went looking for,
+    with no threshold, no pill and no glow behind it, so it does not reopen the
+    question of whether memory is worth watching. It is not.
 
 ### Events
 

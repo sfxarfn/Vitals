@@ -119,16 +119,6 @@ extension NotchView {
         }
     }
 
-    private func statLine(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 8) {
-            Text(label).foregroundStyle(.white.opacity(0.45))
-            Spacer(minLength: 0)
-            Text(value).monospacedDigit().foregroundStyle(.white)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-    }
-
     /// On AC with no estimate the honest line is that it is plugged in —
     /// `isCharging` cannot be the only thing that decides the wording.
     private var chargeState: String {

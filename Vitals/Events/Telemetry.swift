@@ -30,6 +30,30 @@ struct StallSample {
     var cpuPercent: Double = 0
     /// Hottest die sensor, °C. Nil on a machine whose sensor tree we cannot read.
     var tempC: Double?
+    /// The same sensors split by which block of the die they sit on, hottest per
+    /// block. Only the thermal panel reads this — every pill and glow works off
+    /// `tempC`, because one edge can only say one number.
+    var dieGroups: [SensorGroup: Double] = [:]
+}
+
+/// Which block of the die a temperature sensor sits on, read off the service's
+/// `Product` string. Only the three the panel names have a case; everything else
+/// — SOC, ANE, NAND, the gas gauge — is `other`. It still counts toward `tempC`,
+/// the governor reacts to whichever sensor is hottest regardless of block.
+///
+/// ponytail: prefix match on observed strings (`pACC MTR Temp Sensor0`). A
+/// machine that names them differently drops every sensor into `other`, and the
+/// panel prints "—" on those three rows rather than lying — dump `Product` for
+/// each service and add the prefix if that happens.
+enum SensorGroup: Hashable {
+    case pCore, eCore, gpu, other
+
+    init(product: String) {
+        if product.hasPrefix("pACC")      { self = .pCore }
+        else if product.hasPrefix("eACC") { self = .eCore }
+        else if product.hasPrefix("GPU")  { self = .gpu }
+        else                              { self = .other }
+    }
 }
 
 // MARK: - Die temperature
@@ -45,6 +69,7 @@ private final class TemperatureSensors {
     private typealias CopyServices = @convention(c) (AnyObject) -> Unmanaged<CFArray>?
     private typealias CopyEvent = @convention(c) (AnyObject, Int64, Int32, UInt64) -> Unmanaged<AnyObject>?
     private typealias FloatValue = @convention(c) (AnyObject, Int32) -> Double
+    private typealias CopyProperty = @convention(c) (AnyObject, CFString) -> Unmanaged<AnyObject>?
 
     /// `kIOHIDEventTypeTemperature`. A field id is the event type shifted into
     /// the high half — that packing is how IOHIDEvent addresses a value.
@@ -55,7 +80,10 @@ private final class TemperatureSensors {
     private let floatValue: FloatValue
     /// Held only so the services outlive the initializer — they are the client's.
     private let client: AnyObject
-    private let services: [AnyObject]
+    /// Each service paired with the block it was found to sit on. Classified once
+    /// at init: the `Product` string never changes, and copying it per sample
+    /// would be a CF allocation per sensor per second while the panel is open.
+    private let services: [(group: SensorGroup, service: AnyObject)]
 
     init?() {
         guard let image = dlopen(nil, RTLD_LAZY) else { return nil }
@@ -68,6 +96,9 @@ private final class TemperatureSensors {
               let floatValue: FloatValue = sym("IOHIDEventGetFloatValue"),
               let client = create(kCFAllocatorDefault)?.takeRetainedValue()
         else { return nil }
+        // Optional on purpose: a machine that will not hand over the names still
+        // reports temperatures, it just reports them all as `other`.
+        let copyProperty: CopyProperty? = sym("IOHIDServiceClientCopyProperty")
 
         // kHIDPage_AppleVendor / kHIDUsage_AppleVendor_TemperatureSensor. Usage
         // numbers only mean anything paired with their page, and 5 on any other
@@ -79,24 +110,30 @@ private final class TemperatureSensors {
         self.copyEvent = copyEvent
         self.floatValue = floatValue
         self.client = client
-        self.services = found
+        self.services = found.map { svc in
+            let product = copyProperty?(svc, "Product" as CFString)?
+                .takeRetainedValue() as? String ?? ""
+            return (group: SensorGroup(product: product), service: svc)
+        }
     }
 
-    /// Hottest sensor on the machine, °C.
+    /// Hottest sensor per block, °C. Empty if nothing answered this tick.
     ///
-    /// ponytail: max, not an average of the named core dies. The match already
-    /// narrows this to temperature sensors, and the hottest one is what the
-    /// thermal governor is reacting to — which is the number the throttling pill
-    /// is trying to explain. Filter on each service's `Product` string (the
-    /// P-core dies are `pACC MTR Temp Sensor…`) if a specific one is ever needed.
-    func read() -> Double? {
-        services.lazy.compactMap { svc -> Double? in
-            guard let event = self.copyEvent(svc, Self.eventType, 0, 0)?.takeRetainedValue() else { return nil }
+    /// ponytail: max within a block, not an average of its dies. The hottest
+    /// sensor is what the thermal governor is reacting to, which is the number
+    /// the throttling pill is trying to explain, and the same holds one block
+    /// down. `.other` is kept so the overall hottest still sees every sensor.
+    func read() -> [SensorGroup: Double] {
+        var out: [SensorGroup: Double] = [:]
+        for (group, svc) in services {
+            guard let event = copyEvent(svc, Self.eventType, 0, 0)?.takeRetainedValue() else { continue }
             // A sensor whose block is powered down answers zero rather than
             // declining, and a machine at 0°C is not the case worth handling.
-            let c = self.floatValue(event, Self.field)
-            return c > 0 ? c : nil
-        }.max()
+            let c = floatValue(event, Self.field)
+            guard c > 0 else { continue }
+            out[group] = max(out[group] ?? 0, c)
+        }
+        return out
     }
 }
 
@@ -107,6 +144,18 @@ final class Telemetry {
     private(set) var power = PowerSample()
     private(set) var stall = StallSample()
     private(set) var cpuHistory: [Double] = []
+
+    /// macOS's own verdict on the heat. Four words and no numbers, which is why
+    /// nothing decides a threshold from it — but it is the only source that says
+    /// the machine *is* trading clocks away, as opposed to being close to it.
+    private(set) var thermalState = ProcessInfo.processInfo.thermalState
+    /// Fraction of RAM under pressure, 0–1. Nil if the host refuses the stats.
+    ///
+    /// Read only by the thermal panel, never by a `Signal` — `.ai/README.md` says
+    /// memory is not a thing this app watches, and this does not make it one:
+    /// there is no threshold, no pill and no glow behind it, just a number in a
+    /// surface you had to click twice to reach.
+    private(set) var memoryUsed: Double?
 
     /// Seconds of continuous CPU load above the sustained threshold.
     private(set) var cpuSustainedSeconds: Double = 0
@@ -286,8 +335,14 @@ final class Telemetry {
     private func sampleStall() {
         var s = StallSample()
         s.cpuPercent = cpuPercent() ?? stall.cpuPercent
-        s.tempC = Self.temperature?.read() ?? stall.tempC
+        // Keep the last good split rather than blanking the panel on a tick where
+        // every sensor happened to decline — same reason `samplePower` holds.
+        let groups = Self.temperature?.read() ?? [:]
+        s.dieGroups = groups.isEmpty ? stall.dieGroups : groups
+        s.tempC = groups.values.max() ?? stall.tempC
         stall = s
+        thermalState = ProcessInfo.processInfo.thermalState
+        memoryUsed = Self.memoryUsedFraction() ?? memoryUsed
 
         cpuHistory.append(s.cpuPercent)
         if cpuHistory.count > Self.historyLength { cpuHistory.removeFirst(cpuHistory.count - Self.historyLength) }
@@ -336,4 +391,51 @@ final class Telemetry {
 
         return pct
     }
+
+    // MARK: Memory
+
+    /// Wired plus compressed over physical RAM — the ratio Activity Monitor's
+    /// pressure bar is drawn from, and the one that means "the machine is out of
+    /// room" rather than "the machine is using the room it has". Plain used
+    /// memory on macOS is always near full and says nothing.
+    ///
+    /// `kern.memorystatus_vm_pressure_level` is the other candidate and is worse
+    /// for a readout: three steps, and it sits on "normal" through everything
+    /// short of a swap storm.
+    private static func memoryUsedFraction() -> Double? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size
+                                           / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return nil }
+        let total = Double(ProcessInfo.processInfo.physicalMemory)
+        guard total > 0 else { return nil }
+        let page = Double(vm_kernel_page_size)
+        let held = (Double(stats.wire_count) + Double(stats.compressor_page_count)) * page
+        return min(held / total, 1)
+    }
 }
+
+// MARK: - Self-check
+
+#if DEBUG
+enum TelemetrySelfCheck {
+    static func run() {
+        // The sensor names are the whole basis for the panel's three rows, and
+        // they are a prefix match on a private string — the one thing here that
+        // silently goes wrong if macOS renames a block.
+        assert(SensorGroup(product: "pACC MTR Temp Sensor3") == .pCore)
+        assert(SensorGroup(product: "eACC MTR Temp Sensor0") == .eCore)
+        assert(SensorGroup(product: "GPU MTR Temp Sensor1") == .gpu)
+        assert(SensorGroup(product: "SOC MTR Temp Sensor0") == .other)
+        // Unnamed is not a crash and not a fourth meaning: it lands in `other`,
+        // where it still counts toward the hottest reading.
+        assert(SensorGroup(product: "") == .other)
+        print("Telemetry self-check passed")
+    }
+}
+#endif

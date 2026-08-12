@@ -1,7 +1,15 @@
 import SwiftUI
 
+/// What sits in the panel's one body slot. The panel's geometry never changes
+/// with it: the row swaps what it holds, the shape stays the one peek grew into.
+/// Each readout is reached from the thing in peek that summarises it — the
+/// battery line, the left flank's degree — so the panel is always the second
+/// half of a glance you already took.
+enum PanelBody { case shelf, battery, thermal }
+
 /// The panel: peek opened downward into a surface you can work in. One body
-/// slot, two things that can sit in it — the shelf, or the battery numbers.
+/// slot, three things that can sit in it — the shelf, the battery numbers, or
+/// the die behind peek's one rounded degree.
 extension NotchView {
 
     // MARK: Body
@@ -13,21 +21,22 @@ extension NotchView {
             Color.clear.frame(height: metrics.notch.height)
                 .overlay(alignment: .leading) { backButton.padding(.leading, 14) }
                 .overlay(alignment: .trailing) { settingsButton().padding(.trailing, 14) }
-            // One slot, two contents — the badge swaps what is in the row,
-            // never the panel's geometry.
+            // One slot, three contents — what put you here swaps the row, never
+            // the panel's geometry.
             Group {
-                if showBattery {
-                    batteryPanel
-                } else {
+                switch panelBody {
+                case .shelf:
                     HStack(spacing: 12) {
                         airDropTile
                         shelfBox
                     }
+                case .battery: batteryPanel
+                case .thermal: thermalPanel
                 }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
-            .animation(.snappy(duration: 0.2), value: showBattery)
+            .animation(.snappy(duration: 0.2), value: panelBody)
         }
     }
 
@@ -55,12 +64,12 @@ extension NotchView {
             // Charge reads off how full the glyph is, not a number — the pill
             // already carries the percentage when it is worth interrupting for.
             // Pressing it swaps the panel's row over to the numbers.
-            Button { showBattery.toggle() } label: {
+            Button { panelBody = panelBody == .battery ? .shelf : .battery } label: {
                 Image(systemName: telemetry.power.isCharging
                       ? "battery.100percent.bolt"
                       : "battery.\(batteryStep)percent")
                     .font(.system(size: size, weight: .medium))
-                    .foregroundStyle(.white.opacity(showBattery || batteryHovered ? 0.9 : 0.45))
+                    .foregroundStyle(.white.opacity(panelBody == .battery || batteryHovered ? 0.9 : 0.45))
             }
             .buttonStyle(.plain)
             .pointerStyle(.link)

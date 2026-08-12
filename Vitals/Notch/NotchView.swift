@@ -26,8 +26,9 @@ struct NotchView: View {
     @State var settingsHovered = false
     @State var trayHovered = false
     @State var backHovered = false
-    @State var showBattery = false
+    @State var panelBody: PanelBody = .shelf
     @State var batteryHovered = false
+    @State var thermalHovered = false
 
     var size: CGSize { metrics.size(for: state) }
     private var lifted: Bool { state != .idle }
@@ -144,9 +145,9 @@ struct NotchView: View {
         }
         .frame(width: metrics.windowSize.width, height: metrics.windowSize.height, alignment: .top)
         .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: growthKey)
-        // The shelf is what the panel is for; a battery row left up from the
-        // last hover would greet the next drag with the wrong one.
-        .onChange(of: state) { if state == .idle { showBattery = false } }
+        // The shelf is what the panel is for; a readout left up from the last
+        // hover would greet the next drag with the wrong one.
+        .onChange(of: state) { if state == .idle { panelBody = .shelf } }
     }
 
     // MARK: Content
@@ -223,5 +224,18 @@ struct NotchView: View {
         }
         .frame(width: 20, height: 20)
         .animation(.easeOut(duration: 0.5), value: fraction)
+    }
+
+    /// One labelled row of the panel's right-hand block, shared by the battery
+    /// numbers and the thermal ones so the two readouts cannot drift apart in
+    /// weight or spacing — they occupy the same slot and swap under each other.
+    func statLine(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(.white.opacity(0.45))
+            Spacer(minLength: 0)
+            Text(value).monospacedDigit().foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .font(.system(size: 11, weight: .medium, design: .rounded))
     }
 }

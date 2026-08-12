@@ -12,8 +12,23 @@ extension NotchView {
     var peekContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                readout("thermometer.medium", tempValue, tint: tempTint)
-                    .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad)
+                // The rounded degree is the summary; the panel behind it is where
+                // the die actually is. Same move the battery line makes on the
+                // row below — peek says the one number, the panel says why.
+                Button {
+                    panelBody = .thermal
+                    show(.panel)
+                } label: {
+                    readout("thermometer.medium", tempValue, tint: tempTint)
+                        .opacity(thermalHovered ? 1 : 0.85)
+                }
+                .buttonStyle(.plain)
+                .pointerStyle(.link)
+                .onHover { thermalHovered = $0 }
+                .animation(.snappy(duration: 0.15), value: thermalHovered)
+                // Outside the button, so the flank keeps the exact geometry it
+                // had before it became one — peek and the build share this width.
+                .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad)
                 Spacer(minLength: 0).frame(width: metrics.notch.width)
                 readout("cpu", "\(Int(telemetry.stall.cpuPercent.rounded()))%", tint: .white)
                     .flankSlot(metrics.statFlanks.right, .trailing, pad: metrics.notchPad)
@@ -32,7 +47,7 @@ extension NotchView {
             // The summary is also the way into the numbers behind it — the panel
             // opens straight onto the battery row rather than the shelf.
             Button {
-                showBattery = true
+                panelBody = .battery
                 show(.panel)
             } label: {
                 batteryStatus.opacity(batteryHovered ? 1 : 0.85)
@@ -46,9 +61,9 @@ extension NotchView {
             // Fills up when the shelf is holding something, so the hover says
             // whether there is anything down there before you open it.
             Button {
-                // The tray asks for the shelf, so it undoes a battery row left
-                // up by the badge or by the row above.
-                showBattery = false
+                // The tray asks for the shelf, so it undoes a readout left up by
+                // the badge or by either stat above.
+                panelBody = .shelf
                 show(.panel)
             } label: {
                 Image(systemName: shelf.urls.isEmpty ? "tray" : "tray.full.fill")
@@ -94,17 +109,4 @@ extension NotchView {
         }
     }
 
-    /// The same ladder the left edge is glowing on, read off the same signal —
-    /// green under 60, orange from 70, red from 80 — so the hovered number and
-    /// the glow beside it can never disagree. Hysteresis comes free with it.
-    private var tempTint: Color {
-        guard telemetry.stall.tempC != nil else { return .white.opacity(0.4) }
-        return thermalGlow?.tint ?? .green
-    }
-
-    /// A machine whose sensor tree we cannot read gets a dash, not a zero — 0°
-    /// is a plausible-looking temperature and reads as a working sensor.
-    private var tempValue: String {
-        telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? "—"
-    }
 }

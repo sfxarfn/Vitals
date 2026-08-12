@@ -17,9 +17,11 @@ things it settled are still binding and are not written down anywhere else:
   Battery Service; the rest is a private framework.
 - **Memory pressure is not watched, and the omission is the finding.** The
   original doc named it as this machine's daily pain. It is not — thermal is.
-  Five memory Signals were sampled, thresholded and deleted, and nothing in the
-  app reads memory today. Re-adding it means re-testing the premise first, not
-  re-reading this note.
+  Five memory Signals were sampled, thresholded and deleted. The thermal panel
+  prints one memory number, which is not a walk-back: it has no threshold, no
+  pill and no glow, and nothing in the app decides anything from it. Giving
+  memory a `Signal` again means re-testing the premise first, not re-reading
+  this note.
 
 None is worth re-investigating. The full old doc, including what was cut and why,
 is in git history: `git show d02f2ba:.ai/steering/product.md`.
@@ -71,8 +73,9 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | File | Role |
 |---|---|
 | [`PeekView.swift`](../Vitals/Interactions/PeekView.swift) | Peek: the two stat flanks and the row of controls under them. |
-| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel: its one body slot, the back button, the shelf and the AirDrop tile. |
+| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel: `PanelBody` and its one body slot, the back button, the shelf and the AirDrop tile. |
 | [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers, shared by both Interactions so the wording cannot drift. |
+| [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — per-block temperatures, throttle headroom, memory. |
 | [`Shelf.swift`](../Vitals/Interactions/Shelf.swift) | The drop box and the AirDrop plumbing. |
 
 [`VitalsApp.swift`](../Vitals/VitalsApp.swift) sits at the root: `@main`, the

@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         EventEngineSelfCheck.run()
         BuildWatcherSelfCheck.run()
+        TelemetrySelfCheck.run()
         #endif
         NSApp.setActivationPolicy(.accessory)
         controller.start()
