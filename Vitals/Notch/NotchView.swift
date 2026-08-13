@@ -60,8 +60,8 @@ struct NotchView: View {
         case .sided(let l, let r):  l != nil && r != nil ? 10 : (l != nil ? 9 : 8)
         case .accessory:            3
         case .audioLost:            4
-        // The verdict is narrower than the counter it follows, so it is its own
-        // shape — sharing the key would swap the content without the shrink.
+        // The verdict owns its own content transition. An untracked build
+        // shares its width; a tracked counter shrinks into it on completion.
         case .verdict:              11
         case .externalEvent:        12
         case .building:             5

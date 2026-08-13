@@ -39,7 +39,7 @@ enum NotchState: Equatable {
 
     /// Xcode is building or archiving. Not an Event — it holds for the whole
     /// build and is the resting state until it ends.
-    case building(BuildProgress)
+    case building(XcodeBuildActivity)
     /// Long-running work reported explicitly by the process doing it.
     case externalActivity(ExternalActivity)
 
@@ -83,28 +83,23 @@ struct NotchMetrics {
     /// more than a lone glyph does. Ceiling is the thermal pair at its hottest:
     /// `thermometer.high` 12 + 4 + "100°" at 12pt, 32pt.
     var sidedFlank: CGFloat = 52
-    /// The build Activity and peek, which stack a pair of values in each flank —
-    /// and the one family where the two sides do not claim the same width, so it
-    /// is the one that leans.
+    /// Peek and generic reported Activities, the widest one-row family.
     ///
-    /// Shared between those two states on purpose: peek can replace a build
+    /// Shared between those two states on purpose: peek can replace an Activity
     /// under a resting pointer, and the shape must not resize under the cursor.
     /// So each side here is the wider of what the two states ask of it, not what
     /// either asks on its own.
     ///
     /// Ceiling is peek's "100%" beside its 20pt symbol box, 63pt. The heat side
-    /// measures a point under that — a degree sign is narrower than a percent —
-    /// and the build's widest ask, a five-digit counter next to its 20pt ring,
-    /// wants 60. All three round to the same number: a lean that comes out of
-    /// glyph widths is noise, not a layout, and the two sides are a matched pair.
+    /// measures a point under that — a degree sign is narrower than a percent.
+    /// Both round to the same number: a lean that comes out of glyph widths is
+    /// noise, not a layout, and the two sides are a matched pair.
     ///
     /// Both readings really do reach three digits — a pegged CPU and a hot die —
     /// so the pad is on top of that, not inside it.
     var statFlanks: Flanks = (64, 64)
-    /// A finished build: Xcode's icon over the job's noun on one side, the
-    /// verdict glyph over its own word on the other. It briefly leaned, when the
-    /// left was a bare icon; putting the noun back under it made the two sides a
-    /// matched pair again, so they round together.
+    /// Untracked Xcode builds, finished Xcode builds and explicit command
+    /// verdicts. Tracked builds use `statFlanks` for their live counter.
     ///
     /// Ceiling is "Success" at 8pt, level with "Archive" and "Analyze" on the
     /// left and wider than either glyph. The other 18 is clearance, not padding:
@@ -164,17 +159,15 @@ struct NotchMetrics {
         case .sided(let left, let right):
             (left == nil ? 0 : sidedFlank, right == nil ? 0 : sidedFlank)
         case .accessory, .audioLost: (glyphFlank, glyphFlank)
-        // The verdict says less than the counter it follows, so the notch
-        // shrinks as the build ends rather than holding the width it needed
-        // while running.
         case .verdict, .externalEvent: verdictFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
-        case .building, .externalActivity: statFlanks
-        // Peek is the build Activity's width, and the panel is peek's — opening
-        // one out of the other only drops the shelf down, it never widens the
-        // shape under the pointer. The panel's body needs ~215pt for the AirDrop
-        // tile and the shelf, which these flanks already clear.
+        case .building(let build):
+            build.progress == nil ? verdictFlanks : statFlanks
+        case .externalActivity: statFlanks
+        // The panel is peek opened further — it only drops the shelf down and
+        // never widens the shape under the pointer. Its body needs ~215pt for
+        // the AirDrop tile and shelf, which these flanks already clear.
         case .peek, .panel: statFlanks
         }
     }

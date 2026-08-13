@@ -31,6 +31,18 @@ struct BuildProgress: Equatable {
     var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
 }
 
+/// The one Xcode build Activity presented by the notch. Its lifecycle comes
+/// from Xcode Behaviors; `progress` is optional enrichment from Accessibility,
+/// never a prerequisite and never synthesized when the watcher is disabled.
+struct XcodeBuildActivity: Equatable {
+    var progress: BuildProgress?
+    /// Kept separately because the Xcode app icon is available through
+    /// NSWorkspace even when Accessibility progress tracking is off.
+    var icon: NSImage?
+
+    var label: String { progress?.label ?? "Building" }
+}
+
 /// Reads Xcode's live build progress over the Accessibility API.
 ///
 /// There is no other channel: the task counter is Xcode's own internal

@@ -69,3 +69,9 @@ FSEvent stream and any active Accessibility timer, requires no Accessibility
 grant, and leaves Behavior-reported starts and results working. Turning it on
 starts the FSEvent gate; AX polling still exists only while build writes are
 arriving.
+
+With tracking off, the Activity still identifies itself with Xcode's app icon
+and **Building**, while an indeterminate blue ring says **Progress**. No
+percentage or zero counter is invented. If AX progress becomes available, the
+right flank changes to the live task counter and determinate ring, and the pill
+uses the wider tracked-build layout. Xcode's identity stays fixed.

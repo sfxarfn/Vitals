@@ -29,6 +29,13 @@ final class NotchController {
     private let accessories = AccessoryWatcher()
     private let builds = BuildWatcher()
     private let commands = CommandReceiver()
+    /// The application icon does not require Accessibility. Keep one copy so
+    /// Behavior-only builds retain Xcode's identity with progress tracking off.
+    @ObservationIgnored private lazy var installedXcodeIcon: NSImage? = {
+        guard let url = NSWorkspace.shared
+            .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode") else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }()
     /// More than one shell may be doing work. The newest Activity owns the
     /// resting notch; when it stops, the next newest one underneath resumes.
     private var externalActivities: [String: ExternalActivity] = [:]
@@ -205,19 +212,26 @@ final class NotchController {
     /// The floor the notch falls back to. Idle, unless an Activity is running —
     /// a build replaces idle as the resting state for as long as it lasts.
     private var resting: NotchState {
-        // A Behavior lifecycle supplies the stable start/end underneath; when
-        // optional AX progress answers, it enriches that same Activity.
-        if let build = builds.progress,
-           externalActivities.values.contains(where: { isBuildActivity($0.name) }) {
-            return .building(build)
-        }
+        // A Behavior lifecycle supplies the stable start/end underneath. The
+        // newest explicit Activity still owns the notch, but an Xcode one gets
+        // the dedicated build presentation whether AX progress answers or not.
         if let explicit = externalActivities.values.max(by: { $0.startedAt < $1.startedAt }) {
+            if isXcodeBuildActivity(explicit.name) { return xcodeBuildState() }
             return .externalActivity(explicit)
         }
         if let build = builds.progress {
-            return .building(build)
+            return xcodeBuildState(progress: build)
         }
         return .idle
+    }
+
+    private func xcodeBuildState(progress: BuildProgress? = nil) -> NotchState {
+        let liveIcon = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.dt.Xcode"
+        })?.icon
+        return .building(XcodeBuildActivity(
+            progress: progress ?? builds.progress,
+            icon: progress?.icon ?? builds.progress?.icon ?? liveIcon ?? installedXcodeIcon))
     }
 
     private var atRest: Bool {
@@ -237,25 +251,26 @@ final class NotchController {
 
         case .activityStart(let activity):
             externalActivities[activity.id] = activity
-            if isBuildActivity(activity.name) { builds.explicitLifecycleStarted() }
+            if isXcodeBuildActivity(activity.name) { builds.explicitLifecycleStarted() }
             if atRest { state = resting }
 
         case .activityStop(let id):
             let stopped = externalActivities.removeValue(forKey: id)
-            if let stopped, isBuildActivity(stopped.name),
-               !externalActivities.values.contains(where: { isBuildActivity($0.name) }) {
+            if let stopped, isXcodeBuildActivity(stopped.name),
+               !externalActivities.values.contains(where: { isXcodeBuildActivity($0.name) }) {
                 builds.explicitLifecycleEnded()
             }
             if atRest { state = resting }
         }
     }
 
-    private func isBuildActivity(_ name: String) -> Bool {
+    private func isXcodeBuildActivity(_ name: String) -> Bool {
         let words = name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        // Generic `tests` may be npm while an unrelated Xcode build is running.
-        // Only an explicitly build-shaped name, or one naming Xcode, is allowed
-        // to suppress Xcode's fallback watcher.
-        return words.contains("xcode") || words.contains("build") || words.contains("archive")
+        // Only the Xcode Behavior protocol gets Xcode identity. A generic CLI
+        // build remains a generic reported Activity and must not suppress or
+        // stop the Accessibility watcher for an unrelated Xcode build.
+        return words.contains("xcode") &&
+            (words.contains("build") || words.contains("archive"))
     }
 
     private var showingSided: Bool {
@@ -383,7 +398,12 @@ final class NotchController {
             ("Audio lost", .audioLost(loudness: 0.66)),
         ]),
         ("Xcode", [
-            ("Build in progress", .building(buildPreview("Building", nil))),
+            ("Build in Progress (w/o tracking)", .building(XcodeBuildActivity(
+                progress: nil,
+                icon: xcodePreviewIcon()))),
+            ("Build in Progress (tracked)", .building(XcodeBuildActivity(
+                progress: buildPreview("Building", nil),
+                icon: xcodePreviewIcon()))),
             ("Build failed", .verdict(buildPreview("Failed", .failed))),
             ("Build succeeded", .verdict(buildPreview("Success", .succeeded))),
         ]),
@@ -405,10 +425,14 @@ final class NotchController {
 
     private static func buildPreview(_ label: String, _ ending: BuildProgress.Ending?) -> BuildProgress {
         BuildProgress(label: label, done: 3019, total: 6766,
-                      icon: NSWorkspace.shared
-                          .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
-                          .map { NSWorkspace.shared.icon(forFile: $0.path) },
+                      icon: xcodePreviewIcon(),
                       ending: ending)
+    }
+
+    private static func xcodePreviewIcon() -> NSImage? {
+        NSWorkspace.shared
+            .urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
     }
 
     func preview(_ state: NotchState) {
