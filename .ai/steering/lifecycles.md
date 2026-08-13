@@ -63,18 +63,42 @@ start, success and failure through `vitals-notify`. The Accessibility watcher is
 optional enrichment that reads Xcode's live task counter; it does not infer an
 outcome from the counter disappearing.
 
-**Track build progress** in Settings controls the watcher. It defaults on to
-preserve existing behavior. Turning it off tears down both the DerivedData
-FSEvent stream and any active Accessibility timer, requires no Accessibility
-grant, and leaves Behavior-reported starts and results working. Turning it on
-starts the FSEvent gate; AX polling still exists only while build writes are
-arriving.
+The watcher has no setting. There is nothing to switch off, because at rest it
+costs nothing to leave on: the DerivedData FSEvent stream is a subscription to a
+daemon macOS already runs, and there is no timer until a build writes. A switch
+would have bought a Settings row and two states to reason about in exchange for
+saving zero.
 
-With tracking off, the Activity still identifies itself with Xcode's app icon
-and **Building**, while an indeterminate blue ring says **Progress**. No
-percentage or zero counter is invented. If AX progress becomes available, the
-right flank changes to the live task counter and determinate ring, and the pill
-uses the wider tracked-build layout. Xcode's identity stays fixed.
+The Accessibility grant is the only opt-in, and it buys exactly one thing: the
+task counter. Nothing prompts for it on its own — the watcher does not interrupt
+a build to ask — so the Settings row is the whole path to it.
+
+Without the grant the Activity still identifies itself with Xcode's app icon and
+**Building**, while an indeterminate blue ring says **Progress**. No percentage
+or zero counter is invented. If AX progress becomes available, the right flank
+changes to the live task counter and determinate ring, and the pill uses the
+wider tracked-build layout. Xcode's identity stays fixed.
+
+### Ending a build Xcode never ended
+
+Success and failure arrive as Behaviors and stop everything: the poll goes down,
+progress clears, and a short deadzone keeps DerivedData's tail writes from
+restarting it. The FSEvent stream stays up — it is the gate for the next build.
+
+Cancels have no Behavior and no script, so the watcher has to conclude one. Two
+tiers of evidence, and they are not equal:
+
+- **With the counter**, both halves are required: it was read and then stopped
+  answering, over a disk that also went quiet. Twenty seconds of each.
+- **Without it**, the disk stands alone over a much longer silence. A blind
+  watcher cannot tell a cancelled run from a long link phase, so this window has
+  to outlast every silence a real build takes.
+
+The weaker tier is deliberate and it has a known cost: a project whose products
+land outside DerivedData gives the watcher no witness at all, and a long build
+there gets dropped off the notch. That is the price of ending cancelled runs
+without the grant, and it is the right trade — the alternative was an Activity
+that sat in the notch until the next build started.
 
 ## Extensions
 

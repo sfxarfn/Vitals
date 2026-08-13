@@ -96,7 +96,19 @@ final class NotchController {
             guard let self, self.atRest else { return }
             state = resting
         }
-        builds.start(enabled: UserDefaults.standard.bool(forKey: BuildWatcher.progressSettingKey))
+        // The one Activity that can outlive the thing it describes: a cancelled
+        // build runs no Behavior script, so `activityStop` never arrives. No
+        // Event is queued in its place — a run you stopped yourself is not news,
+        // and the notch dropping back to idle is the whole message.
+        builds.onLifecycleLost = { [weak self] in
+            guard let self else { return }
+            externalActivities = externalActivities.filter {
+                !self.isXcodeBuildActivity($0.value.name)
+            }
+            builds.explicitLifecycleEnded()
+            if atRest { state = resting }
+        }
+        builds.start()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -410,10 +422,8 @@ final class NotchController {
     // MARK: Permissions
 
     /// Xcode's toolbar is the only source for live progress, and reading it
-    /// needs Accessibility. Settings owns both the opt-in and the grant; the
-    /// grant flips back to false every time a dev build is re-signed.
-    var buildProgressEnabled: Bool { builds.enabled }
-    func setBuildProgressEnabled(_ enabled: Bool) { builds.setEnabled(enabled) }
+    /// needs Accessibility. The grant is the whole opt-in — there is no separate
+    /// switch — and it flips back to false every time a dev build is re-signed.
     var buildAccess: Bool { builds.trusted }
     func requestBuildAccess() { builds.requestAccess() }
 

@@ -76,7 +76,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 
 | File | Role |
 |---|---|
-| [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | Optional Xcode build/archive progress, scraped off the toolbar over the Accessibility API. Xcode Behaviors own lifecycle and verdict; this watcher only enriches a running Activity. |
+| [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | The DerivedData FSEvent gate, Xcode build/archive progress scraped off the toolbar over the Accessibility API, and the cancel fallback. Always on, no setting. Xcode Behaviors own lifecycle and verdict; the grant only decides whether the task count is there. |
 | [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws. |
 | [`ExternalActivityPill.swift`](../Vitals/Activities/ExternalActivityPill.swift) | How explicitly reported long-running work draws when it has a lifecycle but no invented progress counter. |
 

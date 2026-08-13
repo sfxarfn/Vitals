@@ -141,6 +141,10 @@ extension NotchView {
                 .strokeBorder(.white.opacity(shelfTargeted ? 0.55 : 0.2),
                               style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
         }
+        // The scroll view is transparent, so without a shape of its own only
+        // the placeholder text and the item icons take a drop — the empty
+        // slack around them falls through.
+        .contentShape(RoundedRectangle(cornerRadius: 14))
         .dropDestination(for: URL.self) { urls, _ in
             shelf.add(urls)
             return true

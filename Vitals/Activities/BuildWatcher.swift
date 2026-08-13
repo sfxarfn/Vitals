@@ -33,11 +33,11 @@ struct BuildProgress: Equatable {
 
 /// The one Xcode build Activity presented by the notch. Its lifecycle comes
 /// from Xcode Behaviors; `progress` is optional enrichment from Accessibility,
-/// never a prerequisite and never synthesized when the watcher is disabled.
+/// never a prerequisite and never synthesized when the counter cannot be read.
 struct XcodeBuildActivity: Equatable {
     var progress: BuildProgress?
     /// Kept separately because the Xcode app icon is available through
-    /// NSWorkspace even when Accessibility progress tracking is off.
+    /// NSWorkspace with or without the Accessibility grant.
     var icon: NSImage?
 
     var label: String { progress?.label ?? "Building" }
@@ -56,15 +56,16 @@ struct XcodeBuildActivity: Equatable {
 @Observable
 @MainActor
 final class BuildWatcher {
-    static let progressSettingKey = "trackXcodeBuildProgress"
-
     private(set) var progress: BuildProgress?
-    private(set) var enabled = false
     /// Re-read every tick, never cached: a dev build is re-signed on every
     /// compile, which invalidates the grant while the row in System Settings
     /// stays checked. Settings watches this to know when to offer the button.
     private(set) var trusted = AXIsProcessTrusted()
     var onChange: (() -> Void)?
+    /// A Behavior lifecycle is open but the build behind it is gone. Xcode has
+    /// no cancel Behavior, so a cancelled run reports no ending at all and the
+    /// Activity would sit in the notch until the next build starts.
+    var onLifecycleLost: (() -> Void)?
 
     private var timer: Timer?
     private var stream: FSEventStreamRef?
@@ -72,6 +73,9 @@ final class BuildWatcher {
     /// A Behavior result can land while Xcode is still flushing DerivedData.
     /// Ignore those tail writes so a finished Activity cannot briefly return.
     private var ignoreDiskUntil = Date.distantPast
+    /// A Behavior lifecycle is open. While it is, the poll runs on its word
+    /// rather than on the disk's.
+    private var explicit = false
     /// Consecutive reads that found nothing while the disk was still busy, and
     /// the earliest the next read may run. Every way this watcher can go blind —
     /// a localized Xcode, a moved activity view, a layout `skipRoles` hides —
@@ -85,7 +89,6 @@ final class BuildWatcher {
     /// after it re-reads one small subtree.
     private var status: AXUIElement?
     private var icon: NSImage?
-    private var prompted = false
     /// Text from the most recent scan, retained for the DEBUG miss report.
     private var lastText = ""
     /// When the counter stopped answering. Nil while it is still being read.
@@ -116,6 +119,19 @@ final class BuildWatcher {
     /// miss must not blink a live Activity; outcomes arrive separately through
     /// Xcode Behaviors and never get guessed here.
     private static let settle: TimeInterval = 2
+    /// How long a Behavior lifecycle may run with a counter that was there and
+    /// went away, over a disk that has gone quiet, before the run is called
+    /// dead. Longer than `grace` on purpose: this one ends an Activity that
+    /// Xcode said was running, so it has to outlast every silence a real build
+    /// takes — a long link, a stalled single-file compile. Calibration knob.
+    private static let abandoned: TimeInterval = 20
+    /// The same, for a watcher that never read a counter at all. Much longer,
+    /// because the disk is then the only witness and it is the poorer one:
+    /// nothing in a quiet DerivedData distinguishes a cancelled run from a long
+    /// link. A project that builds outside DerivedData has no witness at all and
+    /// gets dropped here — the price of ending cancelled runs without the
+    /// Accessibility grant. Calibration knob.
+    private static let abandonedBlind: TimeInterval = 90
     /// Ceiling on the miss counter, so the gap tops out at `live << 4` — 16s.
     /// A blind watcher that rechecks every 16s still recovers the moment Xcode
     /// puts the activity view back where the scan can see it.
@@ -128,10 +144,29 @@ final class BuildWatcher {
         live * Double(1 << min(max(misses, 0), maxBackoff))
     }
 
-    func start(enabled: Bool) {
-        // No timer here. Without it the resting cost of this whole file is one
-        // kernel-pushed callback that never arrives until a build writes — and
-        // with progress disabled even that stream does not exist.
+    /// Whether an open Behavior lifecycle has nothing left running behind it.
+    ///
+    /// Two tiers of evidence, because Xcode has no cancel Behavior and the
+    /// alternative is an Activity that sits in the notch until the next build.
+    ///
+    /// With a counter, both halves are required: it was read and then stopped
+    /// answering, over a disk that also went quiet. That is the strong case, and
+    /// `abandoned` can be short because of it.
+    ///
+    /// Without one — no Accessibility grant, a localized Xcode, an activity view
+    /// the scan cannot see — the disk is the only witness left and has to stand
+    /// alone, over a much longer silence. A blind watcher cannot tell a
+    /// cancelled run from a long link, and the cost of being wrong here is
+    /// dropping a live build off the notch.
+    static func lifecycleLost(lostAt: Date?, lastWrite: Date, now: Date) -> Bool {
+        let quiet = now.timeIntervalSince(lastWrite)
+        guard let lostAt else { return quiet >= abandonedBlind }
+        return now.timeIntervalSince(lostAt) >= abandoned && quiet >= abandoned
+    }
+
+    func start() {
+        // No timer here. The resting cost of this whole file is one
+        // kernel-pushed callback that never arrives until a build writes.
         //
         // The Settings row still needs a fresh answer, and activating Vitals is
         // exactly when someone is looking at it — including on the way back
@@ -139,34 +174,35 @@ final class BuildWatcher {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.enabled else { return }
-                self.trusted = AXIsProcessTrusted()
-            }
+            MainActor.assumeIsolated { self?.trusted = AXIsProcessTrusted() }
         }
-        setEnabled(enabled)
-    }
-
-    func setEnabled(_ enabled: Bool) {
-        guard enabled != self.enabled else { return }
-        self.enabled = enabled
-        if enabled {
-            trusted = AXIsProcessTrusted()
-            watchDerivedData()
-        } else {
-            stop()
-            stopWatchingDerivedData()
-        }
+        watchDerivedData()
     }
 
     /// An explicit Xcode Behavior lifecycle owns the start and finish. Progress
     /// may enrich it while it runs, but a previous build's tail must not leak
     /// into the next one.
+    ///
+    /// This also starts the poll outright. The disk gate is a *guess* that
+    /// something is compiling; a Behavior is Xcode saying so, and it is the
+    /// better gate of the two — a build whose products land outside
+    /// `~/Library/Developer/Xcode/DerivedData` (a project-level Build Location
+    /// override) writes nothing the stream can see, and waiting on it means the
+    /// counter is never read at all.
     func explicitLifecycleStarted() {
         ignoreDiskUntil = .distantPast
+        explicit = true
+        // Start the blind cancel clock from the Behavior itself. `lastWrite` is
+        // "when the build was last known alive", and Xcode saying it started is
+        // exactly that. Without the seed it is still `.distantPast` here, and a
+        // project whose products land outside DerivedData — nothing to reset
+        // it — would be abandoned on its first tick.
+        lastWrite = .now
+        poll()
     }
 
     func explicitLifecycleEnded() {
+        explicit = false
         stop()
         ignoreDiskUntil = .now + 10
     }
@@ -175,8 +211,14 @@ final class BuildWatcher {
     /// to be the gate: the kernel pushes this, and it stays silent all day when
     /// no build runs.
     private func diskActivity() {
-        guard enabled, Date.now >= ignoreDiskUntil else { return }
+        guard Date.now >= ignoreDiskUntil else { return }
         lastWrite = .now
+        poll()
+    }
+
+    /// Start the 1s read, if it is not already running. Both gates land here —
+    /// a disk write and an explicit Behavior — and neither restarts a live timer.
+    private func poll() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.live, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -199,6 +241,16 @@ final class BuildWatcher {
         publish(nil)
     }
 
+    /// End a lifecycle nobody is going to end. Stops first, so a watcher with no
+    /// listener still puts its timer down; the listener then drops the Activity
+    /// and calls `explicitLifecycleEnded()`, which lands back in `stop()` as a
+    /// no-op.
+    private func abandon() {
+        let wasExplicit = explicit
+        stop()
+        if wasExplicit { onLifecycleLost?() }
+    }
+
     private func tick() {
         // Before the backoff gate, not after: this is the healthy end of a
         // build, and it must not wait out a gap that only exists because the
@@ -206,20 +258,46 @@ final class BuildWatcher {
         //
         // Nothing on the toolbar and nothing on the disk: the build is over and
         // the timer has no reason to exist until the next one starts.
-        if progress == nil, Date.now.timeIntervalSince(lastWrite) > Self.grace { stop(); return }
+        // Not while a Behavior says a build is running: the disk going quiet is
+        // only evidence when the disk is all we have. Stopping there would also
+        // be terminal, since nothing but a write restarts the timer.
+        if !explicit, progress == nil,
+           Date.now.timeIntervalSince(lastWrite) > Self.grace { stop(); return }
+
+        // Same reasoning one level up, for the case the Behaviors cannot cover:
+        // Xcode has no cancel Behavior, so a quiet disk — with the counter gone
+        // too, when there is one to go — is the only end a cancelled run ever
+        // gets. Before the backoff gate for the same reason as the check above,
+        // and before the `trusted` guard below so it still runs without the
+        // grant, which is the only way that case ever ends.
+        if explicit, Self.lifecycleLost(lostAt: lostAt, lastWrite: lastWrite, now: .now) {
+            abandon(); return
+        }
         guard Date.now >= nextRead else { return }
 
         trusted = AXIsProcessTrusted()
 
+        // Xcode quitting mid-build is the other way a Behavior lifecycle is left
+        // without an ending — the succeeded/failed script it would have run went
+        // with it.
         guard let xcode = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == "com.apple.dt.Xcode"
-        }) else { stop(); return }
+        }) else { abandon(); return }
 
         guard trusted else {
-            // Once per launch. The system dialog is the only place macOS lets an
-            // app ask, and asking every second would pin it to the screen.
-            if !prompted { prompted = true; requestAccess() }
-            stop()
+            #if DEBUG
+            print("[BuildWatcher] no Accessibility grant — a re-signed dev build "
+                  + "loses it while the System Settings row stays checked")
+            #endif
+            // No prompt from here. Progress is enrichment nobody asked for at
+            // this moment, and `requestAccess()` activates the app and opens
+            // System Settings — fine from the button in Settings, hostile in the
+            // middle of a build. The grant stays the Settings row's business.
+            //
+            // The grant can be given mid-build, and stopping is terminal under a
+            // Behavior lifecycle — nothing but a disk write brings the timer
+            // back. Keep the slowest recheck instead.
+            if explicit { publish(nil); nextRead = .now + Self.gap(Self.maxBackoff) } else { stop() }
             return
         }
 
@@ -256,7 +334,6 @@ final class BuildWatcher {
     /// than trusting the dialog to land. The activate matters too: an accessory
     /// app has no Dock icon, so its dialog can open behind whatever is in front.
     func requestAccess() {
-        guard enabled else { return }
         NSApp.activate()
         _ = AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
@@ -400,7 +477,7 @@ final class BuildWatcher {
     /// The `/Build/` filter is what separates a build from indexing, which
     /// writes next door in `Index.noindex` after nearly every keystroke.
     private func watchDerivedData() {
-        guard enabled, stream == nil else { return }
+        guard stream == nil else { return }
         // Honour a moved DerivedData; Xcode keeps the override in its own
         // defaults, and an absolute path there wins over the default location.
         let custom = UserDefaults(suiteName: "com.apple.dt.Xcode")?
@@ -439,13 +516,6 @@ final class BuildWatcher {
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
         self.stream = stream
-    }
-
-    private func stopWatchingDerivedData() {
-        guard let stream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        self.stream = nil
     }
 
     // MARK: AX plumbing
@@ -503,6 +573,34 @@ enum BuildWatcherSelfCheck {
         // `1 << misses` is undefined for a negative shift, and `misses` is a
         // plain counter one edit away from being decremented somewhere.
         assert(BuildWatcher.gap(-1) == BuildWatcher.gap(0), "a negative count must not shift")
+
+        let now = Date.now
+        let old = now.addingTimeInterval(-60)
+
+        // A blind watcher ends a run on the disk alone, but only after a silence
+        // no real build takes — a minute of quiet is still a long link phase.
+        assert(!BuildWatcher.lifecycleLost(lostAt: nil, lastWrite: old, now: now),
+               "a minute of quiet is not yet a blind cancel")
+        assert(!BuildWatcher.lifecycleLost(lostAt: nil, lastWrite: now, now: now),
+               "a busy disk means the build is alive, counter or not")
+        assert(BuildWatcher.lifecycleLost(
+                lostAt: nil, lastWrite: now.addingTimeInterval(-120), now: now),
+               "a long enough silence is the only end a blind cancelled run gets")
+
+        // The blind window must stay the looser of the two, or the strong case
+        // never fires first and the counter buys nothing.
+        assert(!BuildWatcher.lifecycleLost(lostAt: nil, lastWrite: old, now: now)
+               && BuildWatcher.lifecycleLost(lostAt: old, lastWrite: old, now: now),
+               "a read counter must end a run sooner than the disk alone")
+
+        // Both halves, or neither. A build that is still writing has not been
+        // cancelled, and a counter that came back a second ago has not either.
+        assert(!BuildWatcher.lifecycleLost(lostAt: old, lastWrite: now, now: now),
+               "a busy disk means the build is alive")
+        assert(!BuildWatcher.lifecycleLost(lostAt: now, lastWrite: old, now: now),
+               "a counter lost this instant is one AX miss, not a cancel")
+        assert(BuildWatcher.lifecycleLost(lostAt: old, lastWrite: old, now: now),
+               "counter gone and disk quiet is a cancelled run")
     }
 }
 #endif

@@ -21,9 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller = NotchController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Preserve the existing behavior for upgrades; users can opt out before
-        // Vitals creates the DerivedData stream or touches Accessibility again.
-        UserDefaults.standard.register(defaults: [BuildWatcher.progressSettingKey: true])
         #if DEBUG
         EventEngineSelfCheck.run()
         BuildWatcherSelfCheck.run()
@@ -37,7 +34,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @AppStorage(BuildWatcher.progressSettingKey) private var trackBuildProgress = true
 
     var body: some View {
         Form {
@@ -48,16 +44,7 @@ struct SettingsView: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
             }
-            Section("Xcode") {
-                Toggle("Track build progress", isOn: $trackBuildProgress)
-                    .onChange(of: trackBuildProgress) { _, enabled in
-                        NotchController.shared?.setBuildProgressEnabled(enabled)
-                    }
-                Text("Reads Xcode's toolbar while a build is active. Build start and results reported by Xcode Behaviors still work when this is off.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if trackBuildProgress { Section("Permissions") { buildAccess } }
+            Section("Xcode") { buildAccess }
             // One section per subsystem, in the order `product.md` lists them.
             // Two buttons on opposite sides fire together, which is the only way
             // to see a sided pair without waiting for the machine to produce one.
@@ -86,9 +73,11 @@ struct SettingsView: View {
         .frame(width: 320)
     }
 
-    /// Reading Xcode's toolbar is optional and the only thing here that needs a
-    /// grant. It dies on every re-signed dev build, so this is not a one-time
-    /// onboarding row; it comes back while progress tracking is enabled.
+    /// The grant is the only opt-in progress has, and the only thing here that
+    /// needs one. Nothing asks for it on its own — the watcher stopped
+    /// prompting mid-build — so this row is the whole path to it. It dies on
+    /// every re-signed dev build, which is why it is not a one-time onboarding
+    /// row: it comes back.
     @ViewBuilder private var buildAccess: some View {
         if NotchController.shared?.buildAccess == true {
             Label("Accessibility granted", systemImage: "checkmark.circle.fill")
@@ -97,7 +86,7 @@ struct SettingsView: View {
             LabeledContent("Accessibility") {
                 Button("Grant…") { NotchController.shared?.requestBuildAccess() }
             }
-            Text("Build progress is read from Xcode's toolbar. Remove and re-add Vitals in the list if it is already checked.")
+            Text("Optional. Adds Xcode's live task counter to a running build. Starts, results and cancels work without it. Remove and re-add Vitals in the list if it is already checked.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

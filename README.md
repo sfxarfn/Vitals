@@ -48,14 +48,13 @@ Right-click the notch to open Settings or quit the app.
 
 Open Vitals Settings by right-clicking the notch.
 
-- **Track build progress** under **Xcode** defaults on. Leave it enabled if the
-  notch should show Xcode's live task counter, then under **Permissions** choose
-  **Grant…** for Accessibility and enable Vitals in **System Settings → Privacy
-  & Security → Accessibility**. If Vitals is already checked but cannot read
-  Xcode, remove it from the list and add the copy in `/Applications` again.
-  Turn progress tracking off to disable the DerivedData listener and all Xcode
-  Accessibility reads; lifecycle Events reported by Xcode Behaviors are
-  unaffected.
+- **Accessibility** under **Xcode** is optional, and adds Xcode's live task
+  counter to a running build. Choose **Grant…**, then enable Vitals in **System
+  Settings → Privacy & Security → Accessibility**. If Vitals is already checked
+  but cannot read Xcode, remove it from the list and add the copy in
+  `/Applications` again. Without the grant a build still appears, with Xcode's
+  icon and an indeterminate ring instead of a counter. Vitals never asks for
+  this permission on its own — this row is the only place it is offered.
 - Allow Bluetooth access when macOS asks if you want accessory connection and
   battery Events.
 - Enable **Launch at login** under **General** if Vitals should start after each
@@ -97,8 +96,8 @@ so both sides of the command protocol stay on the same version.
 <summary><strong>How to Install Xcode Behavior scripts</strong></summary>
 
 This is optional. It makes Xcode the authority for build start, success and
-failure. **Track build progress** is a separate setting: it may be disabled to
-avoid Accessibility while these lifecycle Events continue to work.
+failure. It is independent of the Accessibility grant: these lifecycle Events
+work without it, and it works without them.
 
 From the repository or transferred folder, install the three scripts at stable
 paths:
@@ -135,9 +134,16 @@ Verify the hooks without starting a build:
 
 The first command should show an Xcode Build Activity. The second should close
 it and show an Xcode Build Succeeded Event. After that, perform one real Xcode
-build and confirm the same lifecycle fires automatically. Xcode 26 has no
-separate build-cancelled Behavior; confirm the failed hook runs for cancellation
-on the installed Xcode version before relying on that transition.
+build and confirm the same lifecycle fires automatically.
+
+Xcode has no separate build-cancelled Behavior, so a cancelled build runs no
+script and reports no ending. Vitals closes that Activity itself. With the
+Accessibility grant it takes 20 seconds of both the toolbar counter and
+DerivedData being quiet. Without it, DerivedData alone has to stay quiet for 90
+seconds, because a silent disk on its own cannot be told apart from a long link
+phase. A project configured to build outside `~/Library/Developer/Xcode/DerivedData`
+leaves nothing to watch, so a build there is dropped from the notch after those
+90 seconds — grant Accessibility if you use a custom build location.
 
 To update the hooks later, reinstall all three files at the same paths. Their
 Xcode Behavior selections remain valid.

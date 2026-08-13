@@ -262,7 +262,15 @@ struct NotchView: View {
     private func extensionMark(_ item: NotchExtension, side: HorizontalEdge) -> some View {
         HStack(spacing: 7) {
             if side == .trailing, separatesFromState { extensionSeparator }
-            extensionGlyph(item).foregroundStyle(extensionTint(item))
+            extensionGlyph(item)
+                .foregroundStyle(extensionTint(item))
+                // Optical, and only the burst needs it: its spokes reach the
+                // edge of the box on every side, so it comes closer to the
+                // housing than a bordered word or a symbol with its own margin.
+                // Pushed outward here rather than by widening the slot, which
+                // would move both marks.
+                .padding(side == .leading ? .trailing : .leading,
+                         item.name.lowercased() == "claude" ? 4 : 0)
             if side == .leading, separatesFromState { extensionSeparator }
         }
         .frame(width: metrics.extensionFlank(for: state),
@@ -279,7 +287,7 @@ struct NotchView: View {
     ///   already know. Widest thing a slot draws, and it sets `extensionFlank`.
     ///   Every lock and shield SF Symbols offers reads as "encrypted" rather
     ///   than "routed elsewhere".
-    /// - **Claude** — its own burst, rocking while the turn runs.
+    /// - **Claude** — its own burst, bundled as an asset and turning slowly.
     ///
     /// Anything else falls through to the generic symbol, which is what an
     /// Extension nobody has drawn a mark for looks like.

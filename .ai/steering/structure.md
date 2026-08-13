@@ -98,12 +98,13 @@ recent Activity replaces Idle as the resting state.
 
 | File | Responsibility |
 |---|---|
-| `BuildWatcher.swift` | Optionally enriches an Xcode build with a live task count through Accessibility. |
+| `BuildWatcher.swift` | Watches DerivedData for build writes, enriches an Xcode build with a live task count where Accessibility allows, and ends a lifecycle Xcode never closed. |
 | `BuildPill.swift` | Renders a running Xcode build or archive. |
 | `ExternalActivityPill.swift` | Renders explicitly reported work without inventing progress. |
 
-Xcode Behavior scripts own the authoritative build lifecycle. `BuildWatcher`
-only supplies optional progress detail.
+Xcode Behavior scripts own the authoritative build lifecycle. `BuildWatcher` has
+no switch and is always running; the Accessibility grant decides only whether the
+task count is available, not whether the watcher exists.
 
 ### `Vitals/Interactions/` — the user acted
 
