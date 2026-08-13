@@ -60,8 +60,13 @@ which subsystem is talking before you read anything.
   - **Battery Charged** — the pack reached full and the machine is running on the adapter
   - **Charging Started** — current is going into the pack, not just into the machine
 - **Thermal**
-  - **Caution** — the die crossed into heat worth knowing about; lights the left edge
-  - **Cooling Down** — it came back down; you can stop waiting, and the left edge goes dark
+  - **Elevated** — macOS entered `.fair`; silently lights the left edge orange
+  - **Thermal Caution** — macOS entered `.serious`; announces the transition and
+    keeps the left edge glowing orange
+  - **Throttling Active** — macOS entered `.critical`; announces the transition
+    with a red temperature icon while the persistent edge remains orange
+  - **Cooling Down** — macOS returned to `.nominal` after a presented Caution or
+    Throttling Event; you can stop waiting, and the left edge goes dark
 - **CPU**
   - **Caution** — sustained load, long enough that it is the machine and not a blip; lights the right edge
   - The right edge goes dark when load releases, but CPU telemetry does not call

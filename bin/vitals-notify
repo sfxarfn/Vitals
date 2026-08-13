@@ -28,25 +28,30 @@ require_vitals() {
     }
 }
 
-# Arguments cross into JavaScript as an array, then into Foundation as one JSON
-# string. Nothing from the command line is interpolated into source code.
+# Arguments cross into AppleScript as an array, then Foundation serializes them
+# as one JSON string. Nothing from the command line is interpolated into source.
 post() {
     require_vitals || return 1
-    /usr/bin/osascript -l JavaScript -e '
-        ObjC.import("Foundation")
-        function run(argv) {
-            const payload = { version: 1, command: argv[0] }
-            if (argv[1]) payload.name = argv[1]
-            if (argv[2]) payload.id = argv[2]
-            $.NSDistributedNotificationCenter.defaultCenter
-                .postNotificationNameObjectUserInfoDeliverImmediately(
-                    $("com.polkka.Vitals.command"),
-                    $(JSON.stringify(payload)),
-                    null,
-                    true
-                )
-        }
-    ' "$1" "${2-}" "${3-}" >/dev/null
+    /usr/bin/osascript -l AppleScript - "$1" "${2-}" "${3-}" >/dev/null <<'APPLESCRIPT'
+use framework "Foundation"
+
+on run argv
+    set payload to current application's NSMutableDictionary's dictionary()
+    payload's setObject:1 forKey:"version"
+    payload's setObject:(item 1 of argv) forKey:"command"
+    if (item 2 of argv) is not "" then payload's setObject:(item 2 of argv) forKey:"name"
+    if (item 3 of argv) is not "" then payload's setObject:(item 3 of argv) forKey:"id"
+
+    set jsonData to current application's NSJSONSerialization's ¬
+        dataWithJSONObject:payload options:0 |error|:(missing value)
+    set jsonText to current application's NSString's alloc()'s ¬
+        initWithData:jsonData encoding:(current application's NSUTF8StringEncoding)
+
+    set notificationCentre to current application's NSDistributedNotificationCenter's defaultCenter()
+    notificationCentre's postNotificationName:"com.polkka.Vitals.command" ¬
+        object:jsonText userInfo:(missing value) deliverImmediately:true
+end run
+APPLESCRIPT
 }
 
 default_id="${VITALS_ACTIVITY_ID:-shell-$PPID}"

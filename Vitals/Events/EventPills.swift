@@ -112,7 +112,7 @@ extension NotchView {
     /// pill with an empty flank would look broken rather than quiet.
     private func compactValue(_ event: Event) -> String {
         switch event.signal {
-        case .thermalSerious:
+        case .thermalSerious, .thermalCritical:
             telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? event.title
         default:
             batteryValue

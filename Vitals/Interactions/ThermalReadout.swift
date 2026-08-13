@@ -25,11 +25,10 @@ extension NotchView {
         telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? "—"
     }
 
-    /// The same ladder the left edge is glowing on, read off the same signal —
-    /// green under 60, orange from 70, red from 80 — so the hovered number and
-    /// the glow beside it can never disagree. Hysteresis comes free with it.
-    /// Shared with the panel below, so clicking through cannot change the colour
-    /// of the number you clicked.
+    /// The same macOS thermal-pressure state the left edge follows: nominal is
+    /// green, fair and serious are orange, and critical is red. Shared with the
+    /// panel below, so clicking through cannot change the colour of the number
+    /// you clicked.
     var tempTint: Color {
         guard telemetry.stall.tempC != nil else { return .white.opacity(0.4) }
         return thermalGlow?.tint ?? .green
@@ -81,8 +80,8 @@ extension NotchView {
             let left = max(Self.throttleCeilingC - t, 0)
             return "\(Int(left.rounded()))° of headroom"
         case .fair:     return "Warming up"
-        case .serious:  return "Throttling"
-        case .critical: return "Heavily throttled"
+        case .serious:  return "Thermal caution"
+        case .critical: return "Throttling active"
         @unknown default: return "—"
         }
     }

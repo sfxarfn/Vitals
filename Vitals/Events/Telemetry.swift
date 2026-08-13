@@ -202,9 +202,9 @@ final class Telemetry {
         sampleAll()
         restartTimer()
 
-        // Push: thermal state. The four words themselves are no longer used —
-        // the die reading drives everything now — but a state change is a free
-        // nudge to go re-read that sensor at the moment it matters.
+        // Push: thermal pressure. macOS's state drives Events and the edge; the
+        // private die sensors explain it in degrees, so refresh both together at
+        // the transition instead of waiting for the next timer tick.
         NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.sampleStall(); self?.onUpdate?() }

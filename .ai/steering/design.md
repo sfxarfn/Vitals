@@ -52,7 +52,7 @@ menu bar, so the question is always *what can come out*, never what can fit.
   character count. Digits are tabular and pay full width even when they are thin:
   "Full" and "100%" are both four characters, and "Full" is a third narrower.
 - A number beats a word **while the number is still moving** — "48°" says more
-  than "Cooled down" and costs half the room. At a ceiling there is nothing left
+  than "Cooling down" and costs half the room. At a ceiling there is nothing left
   to measure, and the word is what is left to say. A glyph beats a label.
 - **Each side is bought separately.** A flank pays for what it holds, not for
   what the other one holds.

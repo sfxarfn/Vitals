@@ -194,7 +194,7 @@ final class NotchController {
             percent: telemetry.power.percent,
             onAC: telemetry.power.onAC,
             batteryWatts: telemetry.power.batteryWatts,
-            dieTempC: telemetry.stall.tempC ?? 0,
+            thermalState: telemetry.thermalState,
             cpuSustainedSeconds: telemetry.cpuSustainedSeconds
         )
 
@@ -374,7 +374,11 @@ final class NotchController {
     /// Interactions — hovering the notch is already the way to see those.
     static let previews: [(group: String, previews: [Preview])] = [
         ("Power",   [pill(.chargingStarted), pill(.charged)]),
-        ("Thermal", [pill(.thermalSerious), allClear(.thermalSerious)]),
+        ("Thermal", [
+            pill(.thermalSerious),
+            pill(.thermalCritical),
+            allClear(.thermalCritical),
+        ]),
         ("Connections", [
             ("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
             // No level reported — the flank falls back to the Bluetooth mark.

@@ -1,8 +1,9 @@
 # .ai — start here
 
-Context for agents working on Vitals. Read [`steering/product.md`](steering/product.md)
-and [`steering/design.md`](steering/design.md) before proposing anything; most
-"obvious improvements" are already decided against, with reasons.
+Context for agents working on Vitals. Read [`steering/product.md`](steering/product.md),
+[`steering/design.md`](steering/design.md), and
+[`steering/lifecycles.md`](steering/lifecycles.md) before proposing anything;
+most "obvious improvements" are already decided against, with reasons.
 
 The steering docs are the **target**, not a description of the code. Where the
 two disagree, the code is what has to move.
@@ -33,6 +34,7 @@ is in git history: `git show d02f2ba:.ai/steering/product.md`.
 | [`../README.md`](../README.md) | The user-facing installation, command setup, and uninstallation guide for moving a known-good `Vitals.app` to another Mac. |
 | [`steering/product.md`](steering/product.md) | What Vitals is and what the notch says. Every state it can take, in three categories — **Interactions**, **Events**, **Activities** — plus Idle as the floor and Glow as the residue an Event leaves behind. |
 | [`steering/design.md`](steering/design.md) | How the notch looks and moves: shape, flank layout, how width is bought, which states may grow vertically, and the grow/shrink rule. |
+| [`steering/lifecycles.md`](steering/lifecycles.md) | How conditions and explicit work begin and end, including the binding decision to keep CPU monitoring on adaptive in-process polling. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Build rules. Short version: never run `xcodebuild` or `swift build`, never launch the app — the user does that in Xcode. Make the edit, say what to look for, stop. |
 
 The main [`README.md`](../README.md) is the canonical installation guide. Any
