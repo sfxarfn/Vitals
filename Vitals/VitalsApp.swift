@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         EventEngineSelfCheck.run()
         BuildWatcherSelfCheck.run()
         TelemetrySelfCheck.run()
+        NotchExtensionSelfCheck.run()
         #endif
         NSApp.setActivationPolicy(.accessory)
         controller.start()
@@ -68,6 +69,17 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+            Section("Preview · Extensions") {
+                Button("Claude in progress") {
+                    NotchController.shared?.previewExtension("claude")
+                }
+                Button("VPN connected") {
+                    NotchController.shared?.previewExtension("vpn")
+                }
+                Text("Each preview stays active for six seconds. Press both to inspect activation order.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

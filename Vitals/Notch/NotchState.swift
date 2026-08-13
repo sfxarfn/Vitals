@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Every shape the notch can take, in the three categories `product.md` splits
-/// them into: **Interactions** end when you leave them, **Events** end on their
-/// own clock, an **Activity** ends when the work does.
+/// Every exclusive shape the notch can take, in the three categories
+/// `product.md` splits them into: **Interactions** end when you leave them,
+/// **Events** end on their own clock, an **Activity** ends when the work does.
+/// Extensions compose outside this enum so none can replace the current state.
 enum NotchState: Equatable {
     /// The floor: the notch at its physical size, saying nothing. Everything
     /// falls back here — except an Activity, which replaces it while it runs.
@@ -107,44 +108,36 @@ struct NotchMetrics {
     /// is curving back in, and the outline takes 6–9pt of horizontal bite across
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
-    /// The tunnel badge on the outer right edge: the mark, the hairline that
-    /// separates it from whatever the state is saying, and the gaps around both.
-    /// The 8pt mark measures ~25 with its box, plus the hairline and the two
-    /// gaps: ~36. The rest is outward slack, and it is not padding — the bottom
-    /// corner curves back in across the last few points of every flank, and a
-    /// bordered box is a shape whose edge shows the bite.
-    var vpnFlank: CGFloat = 46
+    /// One outboard Extension: a single 16pt icon, the hairline separating it
+    /// from the current state, and clearance for the bottom corner.
+    var extensionFlank: CGFloat = 36
     var panelBodyHeight: CGFloat = 94
-
-    /// Whether a VPN tunnel is up. Set from telemetry rather than measured, and
-    /// the only thing in here that is not a width — it decides whether the badge
-    /// is on, and every width below follows from that.
-    var vpn = false
 
     // MARK: What a state buys
 
-    /// Whether the tunnel badge is drawn on this state. Everything but the two
-    /// Interactions: peek already says it in the network row it grew for, and the
-    /// panel is peek opened further — a second copy on the same surface.
-    func showsVPN(_ state: NotchState) -> Bool {
+    /// Interactions already own the full surface and draw their richer summaries;
+    /// Extensions accompany the horizontal resting, Activity and Event shapes.
+    func visibleExtensions(_ state: NotchState, _ extensions: ExtensionSlots) -> ExtensionSlots {
         switch state {
-        case .peek, .panel: false
-        default: vpn
+        case .peek, .panel: .empty
+        default: extensions
         }
     }
 
     /// The two flanks a state grows, in the order they sit on screen. Whatever
     /// this returns, the notch's own width sits untouched between them.
     ///
-    /// The badge is added here rather than by whatever draws it, so the lean and
-    /// the hover region follow it without either having to know it exists.
-    func flanks(for state: NotchState) -> Flanks {
+    /// Extensions are added here rather than by their view, so shape growth,
+    /// lean and the hover region all follow the same allocation.
+    func flanks(for state: NotchState, extensions: ExtensionSlots) -> Flanks {
         var f = baseFlanks(for: state)
-        if showsVPN(state) { f.right += vpnFlank }
+        let visible = visibleExtensions(state, extensions)
+        if visible.left != nil { f.left += extensionFlank }
+        if visible.right != nil { f.right += extensionFlank }
         return f
     }
 
-    /// What the state itself asks for, before the badge.
+    /// What the state itself asks for, before Extensions.
     func baseFlanks(for state: NotchState) -> Flanks {
         switch state {
         case .idle: (0, 0)
@@ -176,13 +169,18 @@ struct NotchMetrics {
     /// still drawn centred in the window, which would slide the camera housing
     /// out from under the middle; putting half the difference back is what keeps
     /// the dead space over the housing where it physically is.
-    func lean(for state: NotchState) -> CGFloat {
-        let f = flanks(for: state)
+    func lean(for state: NotchState, extensions: ExtensionSlots) -> CGFloat {
+        let f = flanks(for: state, extensions: extensions)
         return (f.right - f.left) / 2
     }
 
-    func size(for state: NotchState) -> CGSize {
-        let f = flanks(for: state)
+    func size(for state: NotchState, extensions: ExtensionSlots) -> CGSize {
+        let f = flanks(for: state, extensions: extensions)
+        return CGSize(width: notch.width + f.left + f.right, height: height(for: state))
+    }
+
+    func baseSize(for state: NotchState) -> CGSize {
+        let f = baseFlanks(for: state)
         return CGSize(width: notch.width + f.left + f.right, height: height(for: state))
     }
 
@@ -207,13 +205,10 @@ struct NotchMetrics {
     /// radius 24 blurs ~36pt out, plus its 12pt drop.
     /// `statFlanks` is the widest pair any state buys — peek, the panel and the
     /// running build all sit on it, and every other family is narrower.
-    /// The badge's width is reserved here whether or not a tunnel is up: the
-    /// window's frame is set once, when the screen is found, and a VPN coming up
-    /// afterwards only changes what the shape inside it draws. Left out, the
-    /// widest badged state would eat into the shadow's slack instead of the
-    /// window growing for it.
+    /// Both Extension slots are reserved whether or not they are active: the
+    /// window's frame is set once, while conditions can change afterwards.
     var windowSize: CGSize {
-        let widest = notch.width + statFlanks.left + statFlanks.right + vpnFlank
+        let widest = notch.width + statFlanks.left + statFlanks.right + extensionFlank * 2
         return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }

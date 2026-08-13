@@ -32,7 +32,7 @@ is in git history: `git show d02f2ba:.ai/steering/product.md`.
 | Path | What it holds |
 |---|---|
 | [`../README.md`](../README.md) | The user-facing installation, command setup, and uninstallation guide for moving a known-good `Vitals.app` to another Mac. |
-| [`steering/product.md`](steering/product.md) | What Vitals is and what the notch says. Every state it can take, in three categories — **Interactions**, **Events**, **Activities** — plus Idle as the floor and Glow as the residue an Event leaves behind. |
+| [`steering/product.md`](steering/product.md) | What Vitals is and what the notch says. The three exclusive categories — **Interactions**, **Events**, **Activities** — plus compositional **Extensions**, Idle as the floor and Glow as Event residue. |
 | [`steering/design.md`](steering/design.md) | How the notch looks and moves: shape, flank layout, how width is bought, which states may grow vertically, and the grow/shrink rule. |
 | [`steering/lifecycles.md`](steering/lifecycles.md) | How conditions and explicit work begin and end, including the binding decision to keep CPU monitoring on adaptive in-process polling. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Build rules. Short version: never run `xcodebuild` or `swift build`, never launch the app — the user does that in Xcode. Make the edit, say what to look for, stop. |
@@ -45,7 +45,7 @@ change.
 ## Code map
 
 The tree mirrors `product.md`: one directory per category, plus `Notch/` for the
-surface all three draw on. A new state goes in the directory of the category it
+surface they draw on. A new state goes in the directory of the category it
 belongs to — if it fits none of them, it does not belong in the notch.
 
 ### `Notch/` — the surface
@@ -88,6 +88,12 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — per-block temperatures, throttle headroom, memory. |
 | [`Shelf.swift`](../Vitals/Interactions/Shelf.swift) | The drop box and the AirDrop plumbing. |
 
+### `Extensions/` — concurrent conditions
+
+| File | Role |
+|---|---|
+| [`NotchExtension.swift`](../Vitals/Extensions/NotchExtension.swift) | An explicitly or telemetrically owned lifecycle, plus the activation-order allocator that gives the oldest condition the right slot and the next one the left. |
+
 [`VitalsApp.swift`](../Vitals/VitalsApp.swift) sits at the root: `@main`, the
 accessory-policy app, the Settings scene, and the debug self-checks.
 
@@ -107,9 +113,9 @@ accessory-policy app, the Settings scene, and the debug self-checks.
   says anything about is not a Signal — it was sampled, thresholded and thrown
   away, and five of those were deleted once. Add the doc entry first, then the
   case; `Telemetry` only samples what some Signal reads.
-- **`NotchView` is one type across five files.** Extensions cannot add storage,
-  so every `@State` is declared in `NotchView.swift` and is internal, not
-  private, because the category files read it.
+- **`NotchView` is one type across five files.** Swift extensions cannot add
+  storage, so every `@State` is declared in `NotchView.swift` and is internal,
+  not private, because the category files read it.
 - **Detection channels are not interchangeable.** Input devices come from
   IOKit HID matching, headsets from a CoreAudio default-output listener. Neither
   sees the other's devices. HID usage numbers only mean something *paired with

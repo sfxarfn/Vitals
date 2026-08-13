@@ -17,9 +17,9 @@ Memory pressure was the original guess at this and turned out not to be it.
 
 ## Notch State
 
-Every shape the notch can take. Three categories, split by **who acted** and
-**how the state ends**. That split is the model — a new state has to land in one
-of them, or it does not belong in the notch.
+Every shape the notch can take. Three exclusive categories, split by **who
+acted** and **how the state ends**, plus Extensions that accompany one of those
+states without taking it over.
 
 | | Who acted | How it ends |
 |---|---|---|
@@ -27,9 +27,14 @@ of them, or it does not belong in the notch.
 | **Events** | The machine did | On its own clock |
 | **Activities** | Work you started | When the work ends |
 
-**Idle** is the floor: the notch at its physical size, showing nothing.
-Everything returns to it — except an Activity, which *replaces* it as the
-resting state for as long as the work runs.
+**Extensions** are the compositional exception to the table. A condition begins
+and ends on its source's lifecycle, while the current Idle, Event or Activity
+keeps its own lifecycle and content.
+
+**Idle** is the floor: the notch's base state at its physical size, showing
+nothing. Everything returns to it — except an Activity, which *replaces* it as
+the resting state for as long as the work runs. An Extension may still grow
+Idle outboard without replacing that floor.
 
 **Glow** is the one thing that outlives its state. An Event announces a
 crossing and leaves; where the condition behind it is still true, the notch
@@ -110,3 +115,19 @@ the notch falls to Idle if it finished meanwhile.
     closes it when done. It shows that it is running but invents no progress;
     multiple process IDs stack, with the newest visible and the previous one
     resuming when it stops.
+
+### Extensions
+
+Extensions add one icon beyond the current horizontal state; they never replace
+it and never take one of an Event's sided flanks. The first Extension to become
+active takes the preferred right edge. A second takes the left edge. When the
+earlier one ends, the survivor moves to the right. Interactions hide these
+outboard icons because Peek already has room for richer condition summaries and
+Panel is that Interaction opened further.
+
+- **Claude In Progress** — Claude Code is processing the current turn. A
+  `UserPromptSubmit` hook begins it; `Stop`, `StopFailure` or `SessionEnd` ends
+  it. Overlapping Claude sessions collapse into one icon and cannot clear one
+  another.
+- **VPN Connected** — a real tunnel interface is up with an address. Telemetry
+  owns both edges of the lifecycle; it is not an Event and has no timer.

@@ -13,6 +13,7 @@ final class NotchController {
     private(set) var metrics = NotchMetrics(notch: .zero)
     private(set) var cpuGlow: Signal?
     private(set) var thermalGlow: Signal?
+    private(set) var extensions = ExtensionSlots.empty
 
     let telemetry = Telemetry()
     let shelf = Shelf()
@@ -39,6 +40,16 @@ final class NotchController {
     /// More than one shell may be doing work. The newest Activity owns the
     /// resting notch; when it stops, the next newest one underneath resumes.
     private var externalActivities: [String: ExternalActivity] = [:]
+    /// Explicit Extension lifecycles are keyed by their caller-provided ID so
+    /// overlapping Claude sessions do not clear each other. Presentation is
+    /// collapsed by name: Claude is one condition even when two sessions work.
+    private var reportedExtensions: [String: NotchExtension] = [:]
+    private var extensionStartedAt: [String: Date] = [:]
+    private var vpnExtension: NotchExtension?
+    /// Settings previews use the same allocator as live conditions, but expire
+    /// on their own so closing Settings cannot strand a fake persistent icon.
+    private var previewExtensions: [String: NotchExtension] = [:]
+    private var previewExtensionDismiss: [String: Timer] = [:]
     /// Events waiting for the notch, in the order they arrived.
     private var queue: [NotchState] = []
     /// The one-sided Events currently up, keyed by the side they own, and a
@@ -57,6 +68,7 @@ final class NotchController {
 
     private static let dwellDelay: TimeInterval = 0.25
     private static let eventDuration: TimeInterval = 2.6
+    private static let extensionPreviewDuration: TimeInterval = 6
 
     func start() {
         Self.shared = self
@@ -124,9 +136,6 @@ final class NotchController {
         }
         self.screen = screen
         metrics = NotchMetrics(notch: notch.size)
-        // Rebuilt from scratch on a screen change, so the tunnel has to be put
-        // back — otherwise the badge disappears until the next telemetry tick.
-        metrics.vpn = telemetry.net.vpn
 
         let size = metrics.windowSize
         let frame = CGRect(x: notch.midX - size.width / 2,
@@ -202,9 +211,15 @@ final class NotchController {
         cpuGlow = visible ? engine.cpuGlow : nil
         thermalGlow = visible ? engine.thermalGlow : nil
 
-        // A condition, not an Event: it never queues and never expires, it just
-        // changes what every non-Interaction state is wide enough to draw.
-        metrics.vpn = telemetry.net.vpn
+        // VPN is a level reading, but its false→true edge supplies the timestamp
+        // that lets it keep arrival order against explicitly reported Extensions.
+        if telemetry.net.vpn, vpnExtension == nil {
+            vpnExtension = NotchExtension(id: "telemetry-vpn", name: "vpn", startedAt: .now)
+            updateExtensionSlots()
+        } else if !telemetry.net.vpn, vpnExtension != nil {
+            vpnExtension = nil
+            updateExtensionSlots()
+        }
 
         presentNext()
     }
@@ -261,7 +276,38 @@ final class NotchController {
                 builds.explicitLifecycleEnded()
             }
             if atRest { state = resting }
+
+        case .extensionStart(let item):
+            let name = item.name.lowercased()
+            if !reportedExtensions.values.contains(where: { $0.name.lowercased() == name }) {
+                extensionStartedAt[name] = item.startedAt
+            }
+            reportedExtensions[item.id] = item
+            updateExtensionSlots()
+
+        case .extensionStop(let id):
+            guard let stopped = reportedExtensions.removeValue(forKey: id) else { return }
+            let name = stopped.name.lowercased()
+            if !reportedExtensions.values.contains(where: { $0.name.lowercased() == name }) {
+                extensionStartedAt[name] = nil
+            }
+            updateExtensionSlots()
         }
+    }
+
+    private func updateExtensionSlots() {
+        var active = reportedExtensions.values.reduce(into: [String: NotchExtension]()) { out, item in
+            let name = item.name.lowercased()
+            guard out[name] == nil else { return }
+            out[name] = NotchExtension(
+                id: "reported-\(name)", name: item.name,
+                startedAt: extensionStartedAt[name] ?? item.startedAt)
+        }
+        for (name, item) in previewExtensions where active[name] == nil {
+            active[name] = item
+        }
+        if let vpnExtension { active["vpn"] = vpnExtension }
+        extensions = .arrange(Array(active.values))
     }
 
     private func isXcodeBuildActivity(_ name: String) -> Bool {
@@ -435,6 +481,28 @@ final class NotchController {
             .map { NSWorkspace.shared.icon(forFile: $0.path) }
     }
 
+    /// Presents the real concurrent layout rather than inventing a standalone
+    /// preview state. Six seconds leaves enough time to press the other button
+    /// and inspect activation order; each button refreshes its own clock.
+    func previewExtension(_ name: String) {
+        let key = name.lowercased()
+        previewExtensionDismiss[key]?.invalidate()
+        previewExtensions[key] = NotchExtension(
+            id: "preview-\(key)", name: name, startedAt: .now)
+        updateExtensionSlots()
+
+        previewExtensionDismiss[key] = Timer.scheduledTimer(
+            withTimeInterval: Self.extensionPreviewDuration, repeats: false
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.previewExtensions[key] = nil
+                self.previewExtensionDismiss[key] = nil
+                self.updateExtensionSlots()
+            }
+        }
+    }
+
     func preview(_ state: NotchState) {
         queue.append(state)
         // Whatever is up loses: pressing a second button is a request to see
@@ -496,10 +564,11 @@ final class NotchController {
         if state == .panel || state == .peek {
             // Whichever shape is on screen is the region to stay inside; peek is
             // a good deal smaller than the panel.
-            let grown = metrics.size(for: state)
+            let grown = metrics.size(for: state, extensions: extensions)
             // Uneven flanks slide the shape off the notch's centre, so the
             // region to stay inside slides with it — see `NotchMetrics.lean`.
-            let rect = CGRect(x: screen.frame.midX - grown.width / 2 + metrics.lean(for: state),
+            let rect = CGRect(x: screen.frame.midX - grown.width / 2
+                              + metrics.lean(for: state, extensions: extensions),
                               y: screen.frame.maxY - grown.height,
                               width: grown.width, height: grown.height)
             // Straying outside mid-drag must not slam the shelf shut with the
@@ -553,6 +622,7 @@ private struct NotchRoot: View {
     var body: some View {
         NotchView(state: controller.state,
                   metrics: controller.metrics,
+                  extensions: controller.extensions,
                   telemetry: controller.telemetry,
                   cpuGlow: controller.cpuGlow,
                   thermalGlow: controller.thermalGlow,

@@ -96,25 +96,16 @@ extension NotchView {
     /// way, so neither line needs a word.
     private var networkStatus: some View {
         HStack(spacing: 5) {
-            // Only when a tunnel is actually carrying the traffic — a badge that
+            // Only when a tunnel is actually carrying the traffic — a mark that
             // is always there says nothing, and the row has no width to spare.
             if telemetry.net.vpn {
-                // The word rather than a glyph: every shield and lock symbol
-                // already means something else in this app's vocabulary, and
-                // three letters at this size read faster than any of them.
-                //
-                // Width is fixed, height is not — the box takes whatever the
-                // stacked pair beside it comes out at, so the two line up at both
-                // edges whatever the point sizes over there end up being.
-                Text("VPN")
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.7))
+                // Extensions are always represented by one icon. Peek gives the
+                // VPN the same mark as its outboard slot rather than changing
+                // vocabulary just because this Interaction has more room.
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.green)
                     .frame(width: 24)
-                    .frame(maxHeight: .infinity)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(.white.opacity(0.3), lineWidth: 1)
-                    }
             }
             VStack(alignment: .leading, spacing: 2) {
                 netLine("arrow.up", telemetry.net.up)

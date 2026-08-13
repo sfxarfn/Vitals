@@ -75,3 +75,16 @@ and **Building**, while an indeterminate blue ring says **Progress**. No
 percentage or zero counter is invented. If AX progress becomes available, the
 right flank changes to the live task counter and determinate ring, and the pill
 uses the wider tracked-build layout. Xcode's identity stays fixed.
+
+## Extensions
+
+Extensions are concurrent conditions, not queued states. Each records its
+inactive-to-active timestamp; the oldest active condition owns the preferred
+right slot and the next owns the left. Ending either condition immediately
+rebuilds those slots, so a lone survivor returns to the right.
+
+VPN uses network telemetry's tunnel level. Claude uses explicit Claude Code
+hooks: `UserPromptSubmit` starts a session-scoped lifecycle and `Stop`,
+`StopFailure`, and `SessionEnd` stop it. Session IDs keep overlapping processes
+independent, while presentation collapses every active Claude session into one
+condition whose timestamp is retained until the final session stops.

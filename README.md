@@ -11,7 +11,7 @@ Xcode to install it.
 
 - A Mac with a built-in display notch
 - macOS 26 or later
-- A copy of `Vitals.app` that already runs on the original Mac
+- A copy of `Vitals.app` that already runs on the original Mac/ included in this same directory
 
 ### Prepare the copy on the original Mac
 
@@ -26,6 +26,8 @@ Xcode to install it.
 5. If Xcode should report exact build lifecycles, transfer the three
    `installation-files/xcode-build-*.sh` scripts too. Keep their filenames
    unchanged so an update can replace them without reconfiguring Xcode.
+6. If Claude Code should show its in-progress Extension, transfer
+   `installation-files/claude-extension.sh` too.
 
 ### Install on the new Mac
 
@@ -89,7 +91,10 @@ vitals-notify event installation-succeeded
 When updating Vitals, transfer the new `Vitals.app` and `vitals-notify` together
 so both sides of the command protocol stay on the same version.
 
-### Install Xcode Behavior scripts
+### Xcode Integrations
+
+<details>
+<summary><strong>How to Install Xcode Behavior scripts</strong></summary>
 
 This is optional. It makes Xcode the authority for build start, success and
 failure. **Track build progress** is a separate setting: it may be disabled to
@@ -137,6 +142,82 @@ on the installed Xcode version before relying on that transition.
 To update the hooks later, reinstall all three files at the same paths. Their
 Xcode Behavior selections remain valid.
 
+</details>
+
+### Claude Integrations
+
+<details>
+<summary><strong>How to Install the Claude Code Extension hook</strong></summary>
+
+This is optional. It shows one Claude icon while Claude Code is processing a
+turn. Install the hook beside the Xcode scripts:
+
+```sh
+mkdir -p "$HOME/.local/libexec/vitals"
+/usr/bin/install -m 755 ./installation-files/claude-extension.sh \
+  "$HOME/.local/libexec/vitals/claude-extension.sh"
+```
+
+Add these hooks to `~/.claude/settings.json`, merging them with any existing
+`hooks` object rather than replacing it:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
+            "args": ["start"]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
+            "args": ["stop"]
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
+            "args": ["stop"]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
+            "args": ["stop"]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Claude Code passes its session ID to the hook. Overlapping sessions therefore
+share one icon without one session clearing another. The hook intentionally
+does nothing when Vitals is not running.
+
+</details>
+
 ## Command notifications
 
 The `vitals-notify` command lets a process report facts it already knows,
@@ -149,6 +230,8 @@ silently dropping a notification.
 vitals-notify event <event-name>
 vitals-notify activity-start <activity-name>
 vitals-notify activity-stop
+vitals-notify extension-start <extension-name>
+vitals-notify extension-stop
 vitals-notify run <activity-name> -- <command> [arguments...]
 ```
 
@@ -166,6 +249,11 @@ identity. Use `--id` or `VITALS_ACTIVITY_ID` when a script needs an explicit,
 stable identity. More than one ID may be active; the newest is shown, and the
 previous Activity resumes when it stops.
 
+Extensions use the same explicit ID convention but accompany the current state
+instead of replacing it. The first active Extension gets the right edge and the
+next gets the left; a survivor returns to the right. Each Extension is always a
+single icon.
+
 ## Uninstalling Vitals
 
 1. If Xcode Behaviors were configured, open **Xcode → Settings → Behaviors →
@@ -173,25 +261,29 @@ previous Activity resumes when it stops.
    build fails**, select the Vitals Run Script action and choose **Remove**.
    Remove these actions before deleting their files so Xcode does not retain
    dead script hooks.
-2. Right-click the notch, open **Settings**, and disable **Launch at login**.
-3. Right-click the notch again and choose **Quit Vitals**.
-4. Move `/Applications/Vitals.app` to the Trash.
-5. Remove the installed command and Behavior scripts:
+2. If the Claude Code hook was configured, remove the Vitals entries from
+   `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` in
+   `~/.claude/settings.json`.
+3. Right-click the notch, open **Settings**, and disable **Launch at login**.
+4. Right-click the notch again and choose **Quit Vitals**.
+5. Move `/Applications/Vitals.app` to the Trash.
+6. Remove the installed command and integration scripts:
 
    ```sh
    rm "$HOME/.local/bin/vitals-notify"
    rm "$HOME/.local/libexec/vitals/xcode-build-started.sh" \
       "$HOME/.local/libexec/vitals/xcode-build-succeeded.sh" \
-      "$HOME/.local/libexec/vitals/xcode-build-failed.sh"
+      "$HOME/.local/libexec/vitals/xcode-build-failed.sh" \
+      "$HOME/.local/libexec/vitals/claude-extension.sh"
    rmdir "$HOME/.local/libexec/vitals"
    ```
 
    Skip any path that was not installed. `rmdir` removes the directory only if
    it is empty.
-6. Open **System Settings → Privacy & Security → Accessibility**, select Vitals,
+7. Open **System Settings → Privacy & Security → Accessibility**, select Vitals,
    and remove it with the minus button. Remove or disable it under **Bluetooth**
    there as well if it remains listed.
-7. Check **System Settings → General → Login Items & Extensions** and remove any
+8. Check **System Settings → General → Login Items & Extensions** and remove any
    remaining Vitals login item. This is only necessary if the app was deleted
    before **Launch at login** was disabled.
 
@@ -205,3 +297,5 @@ defaults delete com.polkka.Vitals
 If the copied app uses a different bundle identifier, use that identifier in the
 `defaults delete` command instead. The transferred ZIP or other installer copy
 is separate from the installed app and can be deleted independently.
+
+- For AI Agents: always ask user whther they want full installations or skips some integrations.

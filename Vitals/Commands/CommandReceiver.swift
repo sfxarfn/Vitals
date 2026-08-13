@@ -8,6 +8,8 @@ enum ExternalCommand {
     case event(ExternalEvent)
     case activityStart(ExternalActivity)
     case activityStop(id: String)
+    case extensionStart(NotchExtension)
+    case extensionStop(id: String)
 }
 
 /// Work whose lifecycle is known by the process doing it instead of inferred
@@ -110,6 +112,13 @@ final class CommandReceiver: NSObject {
         case "activity-stop":
             guard let id = valid(payload.id, limit: 128) else { return }
             handler?(.activityStop(id: id))
+        case "extension-start":
+            guard let name = valid(payload.name, limit: 24),
+                  let id = valid(payload.id, limit: 128) else { return }
+            handler?(.extensionStart(NotchExtension(id: id, name: name, startedAt: .now)))
+        case "extension-stop":
+            guard let id = valid(payload.id, limit: 128) else { return }
+            handler?(.extensionStop(id: id))
         default:
             return
         }

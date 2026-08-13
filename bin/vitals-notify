@@ -8,6 +8,8 @@ Usage:
   vitals-notify event <event-name>
   vitals-notify activity-start <activity-name> [--id <id>]
   vitals-notify activity-stop [--id <id>]
+  vitals-notify extension-start <extension-name> [--id <id>]
+  vitals-notify extension-stop [--id <id>]
   vitals-notify run <activity-name> -- <command> [arguments...]
 
 Examples:
@@ -85,6 +87,27 @@ case "$verb" in
             activity_id=$2
         fi
         post activity-stop "" "$activity_id"
+        ;;
+
+    extension-start)
+        [ "$#" -ge 1 ] || fail "extension-start expects a name"
+        extension_name=$1
+        shift
+        extension_id=$default_id
+        if [ "$#" -gt 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = "--id" ] || fail "expected --id <id>"
+            extension_id=$2
+        fi
+        post extension-start "$extension_name" "$extension_id"
+        ;;
+
+    extension-stop)
+        extension_id=$default_id
+        if [ "$#" -gt 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = "--id" ] || fail "expected --id <id>"
+            extension_id=$2
+        fi
+        post extension-stop "" "$extension_id"
         ;;
 
     run)

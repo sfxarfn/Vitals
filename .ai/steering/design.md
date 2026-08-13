@@ -56,6 +56,9 @@ menu bar, so the question is always *what can come out*, never what can fit.
   to measure, and the word is what is left to say. A glyph beats a label.
 - **Each side is bought separately.** A flank pays for what it holds, not for
   what the other one holds.
+- **Extensions are outboard.** Each buys one icon-wide strip beyond the current
+  state's calibrated flank, separated by a hairline. The earliest active
+  Extension takes the right strip; the next takes the left.
 - **A lean has to be legible.** Off-centre by a few points reads as a shape that
   failed to line up, not as a decision. A lean worth keeping comes from the two
   sides holding genuinely different things — a whole flank missing, an icon
@@ -83,7 +86,8 @@ menu bar, so the question is always *what can come out*, never what can fit.
 Height is what separates the categories on sight, so only one of them is allowed
 to use it.
 
-- **Events and Activities** — horizontal only. The notch stays one row tall.
+- **Events, Activities and Extensions** — horizontal only. The notch stays one
+  row tall.
 - **Peek** — horizontal, and twice the notch's height. Exact.
 - **Panel** — horizontal, and as tall as its body needs: about three notch
   heights. A silhouette, not a measurement. Height is bought the same way width

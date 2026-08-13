@@ -2,10 +2,12 @@ import SwiftUI
 
 /// The shape itself: one black outline that grows and shrinks, whatever is
 /// inside it. What goes inside lives beside its category — `Events/`,
-/// `Activities/`, `Interactions/` — and is reached through `content` below.
+/// `Activities/`, `Interactions/` — and is reached through `content` below;
+/// concurrent `Extensions/` are composed outboard of that content.
 struct NotchView: View {
     let state: NotchState
     let metrics: NotchMetrics
+    let extensions: ExtensionSlots
     let telemetry: Telemetry
     /// One per notch edge. Nil is no glow on that side.
     let cpuGlow: Signal?
@@ -30,8 +32,10 @@ struct NotchView: View {
     @State var batteryHovered = false
     @State var thermalHovered = false
 
-    var size: CGSize { metrics.size(for: state) }
-    private var lifted: Bool { state != .idle }
+    var size: CGSize { metrics.size(for: state, extensions: extensions) }
+    private var lifted: Bool {
+        state != .idle || visibleExtensions.left != nil || visibleExtensions.right != nil
+    }
     private let topRadius: CGFloat = 22
     private let bottomRadius: CGFloat = 28
 
@@ -43,11 +47,12 @@ struct NotchView: View {
     /// animation over the two shadow layers that often is what reads as a
     /// flicker, since the geometry never moves and only the shadow gets
     /// re-rasterized.
-    /// The badge changes the shape's width, so it has to be part of the growth
-    /// key or a tunnel coming up hard-cuts the notch wider instead of growing it.
-    /// Rare enough to be a state change in its own right — unlike the numbers
-    /// this key deliberately ignores, it does not tick.
-    private var growthKey: Int { shapeKey * 2 + (vpnWidth > 0 ? 1 : 0) }
+    /// Extension activation and slot movement change the shape's width or lean,
+    /// so both assigned IDs belong to the growth key. Telemetry numbers remain
+    /// absent: their ticks must never replay the shape animation.
+    private var growthKey: String {
+        "\(shapeKey)|\(visibleExtensions.left?.id ?? "-")|\(visibleExtensions.right?.id ?? "-")"
+    }
 
     private var shapeKey: Int {
         switch state {
@@ -77,11 +82,11 @@ struct NotchView: View {
     /// the width under the same growth, which is what makes a one-sided pill
     /// read as growing sideways rather than growing and then sliding — and what
     /// recentres the shape as a second side arrives.
-    private var xOffset: CGFloat { metrics.lean(for: state) }
+    private var xOffset: CGFloat { metrics.lean(for: state, extensions: extensions) }
 
     private var shape: NotchShape {
         NotchShape(topCornerRadius: topRadius,
-                   bottomCornerRadius: state == .idle ? 10 : bottomRadius)
+                   bottomCornerRadius: lifted ? bottomRadius : 10)
     }
 
     // MARK: Body
@@ -102,13 +107,17 @@ struct NotchView: View {
                 // through it.
                 .background(shape.fill(.black))
                 .overlay(alignment: .top) {
-                    // The badge is outboard of the state, never inside it: every
-                    // pill lays its flanks out against the camera housing, so
-                    // content has to keep the width it would have had and the
-                    // badge takes the strip the shape grew for it.
+                    // Extensions are outboard of the state, never inside it:
+                    // every pill keeps its calibrated flanks against the camera
+                    // housing while the icons take the strips grown beyond it.
                     HStack(spacing: 0) {
-                        content.frame(width: size.width - vpnWidth)
-                        if vpnWidth > 0 { vpnMark }
+                        if let left = visibleExtensions.left {
+                            extensionMark(left, side: .leading)
+                        }
+                        content.frame(width: metrics.baseSize(for: state).width)
+                        if let right = visibleExtensions.right {
+                            extensionMark(right, side: .trailing)
+                        }
                     }
                         .frame(width: size.width)
                         // Content is laid out at its final size the instant the
@@ -228,41 +237,40 @@ struct NotchView: View {
             .blur(radius: glowBlur)
     }
 
-    // MARK: VPN badge
+    // MARK: Extensions
 
-    private var vpnWidth: CGFloat { metrics.showsVPN(state) ? metrics.vpnFlank : 0 }
+    private var visibleExtensions: ExtensionSlots {
+        metrics.visibleExtensions(state, extensions)
+    }
 
-    /// The tunnel, on the outer right edge of everything the notch says while it
-    /// is up. A hairline separates it from the state's own right flank, because
-    /// the two are unrelated: one is news with a clock on it, the other is a
-    /// condition that outlasts every pill it will sit beside.
-    ///
-    /// Peek draws its own, taller, in the network row — see `PeekView`. Not
-    /// shared: this one hugs its letters inside a one-row flank, that one tracks
-    /// the height of the pair of readings beside it.
-    private var vpnMark: some View {
-        HStack(spacing: 6) {
-            Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 14)
-            Text("VPN")
-                .font(.system(size: 8, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 3)
-                // Filled, not just outlined: a hairline box this small on black
-                // reads as nothing at all next to a pill carrying a glyph.
-                .background {
-                    RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.12))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.35), lineWidth: 1)
-                }
+    /// One icon beyond the state it accompanies. The separator always faces the
+    /// state, while the icon hugs that same inner edge and unused width falls
+    /// outward — the same geometry rule as a normal flank.
+    private func extensionMark(_ item: NotchExtension, side: HorizontalEdge) -> some View {
+        HStack(spacing: 7) {
+            if side == .trailing { extensionSeparator }
+            Image(systemName: item.symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(extensionTint(item))
+                .frame(width: 17, height: 18)
+            if side == .leading { extensionSeparator }
         }
-        // Its own flank, and it obeys the same rule as every other one: pinned
-        // inward, slack falling outward. Centred, the box lands in the last few
-        // points of the shape, which is exactly where `bottomCornerRadius` is
-        // curving back in and eating the border.
-        .flankSlot(metrics.vpnFlank, .trailing, pad: metrics.notchPad)
+        .frame(width: metrics.extensionFlank,
+               alignment: side == .leading ? .trailing : .leading)
         .frame(height: metrics.notch.height)
+        .accessibilityLabel("\(item.name) active")
+    }
+
+    private var extensionSeparator: some View {
+        Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 14)
+    }
+
+    private func extensionTint(_ item: NotchExtension) -> Color {
+        switch item.name.lowercased() {
+        case "claude": .orange
+        case "vpn": .green
+        default: .white.opacity(0.85)
+        }
     }
 
     // MARK: Shared parts
