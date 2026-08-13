@@ -99,13 +99,21 @@ extension NotchView {
             // Only when a tunnel is actually carrying the traffic — a mark that
             // is always there says nothing, and the row has no width to spare.
             if telemetry.net.vpn {
-                // Extensions are always represented by one icon. Peek gives the
-                // VPN the same mark as its outboard slot rather than changing
-                // vocabulary just because this Interaction has more room.
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.green)
+                // The same word badge the outboard Extension slot draws — this
+                // Interaction having more room is no reason to change
+                // vocabulary. Not shared with it: that one hugs its letters
+                // inside a one-row flank, this one takes whatever height the
+                // stacked pair beside it comes out at, so the two line up at
+                // both edges whatever the point sizes over there end up being.
+                Text("VPN")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.7))
                     .frame(width: 24)
+                    .frame(maxHeight: .infinity)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(.white.opacity(0.3), lineWidth: 1)
+                    }
             }
             VStack(alignment: .leading, spacing: 2) {
                 netLine("arrow.up", telemetry.net.up)

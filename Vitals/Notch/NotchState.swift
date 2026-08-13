@@ -108,9 +108,13 @@ struct NotchMetrics {
     /// is curving back in, and the outline takes 6–9pt of horizontal bite across
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
-    /// One outboard Extension: a single 16pt icon, the hairline separating it
-    /// from the current state, and clearance for the bottom corner.
-    var extensionFlank: CGFloat = 36
+    /// One outboard Extension: its mark, the hairline separating it from the
+    /// current state, and the gaps around both. Ceiling is the VPN badge, the
+    /// widest mark any Extension draws — ~25 with its box, against 17 for a
+    /// plain icon. The rest is outward slack, and it is not padding: the bottom
+    /// corner curves back in across the last few points of every flank, and a
+    /// bordered box is a shape whose edge shows the bite.
+    var extensionFlank: CGFloat = 46
     var panelBodyHeight: CGFloat = 94
 
     // MARK: What a state buys

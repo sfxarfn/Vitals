@@ -36,6 +36,14 @@ struct NotchView: View {
     private var lifted: Bool {
         state != .idle || visibleExtensions.left != nil || visibleExtensions.right != nil
     }
+    /// Only surfaces opened by the pointer lift off the bezel. Activities and
+    /// Events remain visually flush, even though their outline grows.
+    private var castsShadow: Bool {
+        switch state {
+        case .peek, .panel: true
+        default: false
+        }
+    }
     private let topRadius: CGFloat = 22
     private let bottomRadius: CGFloat = 28
 
@@ -134,10 +142,10 @@ struct NotchView: View {
                         .transaction(value: growthKey) { $0.animation = nil }
                 }
                 .clipShape(shape)
-                // Grown states lift off the bezel; idle is flush with it, so no
-                // shadow there. Two layers, the way glass casts: a tight contact
-                // shadow at the edge plus a wide diffuse ambient one. Radii and
-                // opacities interpolate with the growth.
+                // Interactions lift off the bezel; Activities and Events stay
+                // flush with it. Two layers, the way glass casts: a tight
+                // contact shadow at the edge plus a wide diffuse ambient one.
+                // Radii and opacities interpolate as the Interaction opens.
                 //
                 // Cast off a bare copy of the shape behind the clipped box, not
                 // off the box itself: the blur source is then a solid path with
@@ -145,10 +153,10 @@ struct NotchView: View {
                 // second no longer re-blurs two full-window offscreen passes.
                 .background {
                     shape.fill(.black)
-                        .shadow(color: .black.opacity(lifted ? 0.55 : 0),
-                                radius: lifted ? 6 : 0, y: lifted ? 3 : 0)
-                        .shadow(color: .black.opacity(lifted ? 0.35 : 0),
-                                radius: lifted ? 24 : 0, y: lifted ? 12 : 0)
+                        .shadow(color: .black.opacity(castsShadow ? 0.55 : 0),
+                                radius: castsShadow ? 6 : 0, y: castsShadow ? 3 : 0)
+                        .shadow(color: .black.opacity(castsShadow ? 0.35 : 0),
+                                radius: castsShadow ? 24 : 0, y: castsShadow ? 12 : 0)
                 }
                 // Behind the black shape and outside its clip, so only the half
                 // that escapes past each edge is ever seen — that overlap is
@@ -182,8 +190,13 @@ struct NotchView: View {
     /// the panel — the only state with a body to fill — takes longer to arrive.
     @ViewBuilder private var content: some View {
         switch state {
+        // `Color.clear`, not `EmptyView` — the frame this is given is what holds
+        // the state's own width open between the two Extension strips, and a
+        // frame on `EmptyView` takes no space at all. Empty, the row collapsed
+        // to the icon and centred it over the camera housing, where there are no
+        // pixels to draw on: the shape grew and nothing appeared in it.
         case .idle:
-            EmptyView()
+            Color.clear
 
         // Events.
         case .sided(let left, let right):
@@ -249,16 +262,35 @@ struct NotchView: View {
     private func extensionMark(_ item: NotchExtension, side: HorizontalEdge) -> some View {
         HStack(spacing: 7) {
             if side == .trailing { extensionSeparator }
-            Image(systemName: item.symbol)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(extensionTint(item))
-                .frame(width: 17, height: 18)
+            extensionGlyph(item).foregroundStyle(extensionTint(item))
             if side == .leading { extensionSeparator }
         }
         .frame(width: metrics.extensionFlank,
                alignment: side == .leading ? .trailing : .leading)
         .frame(height: metrics.notch.height)
         .accessibilityLabel("\(item.name) active")
+    }
+
+    /// One mark per condition, and VPN is the one that is not a symbol: SF
+    /// Symbols ships no tunnel glyph, and every lock and shield in it reads as
+    /// "encrypted" rather than "routed elsewhere". The three letters in a box,
+    /// the way iOS marks the same condition — outlined, not filled, because that
+    /// is the mark people already know. It is the widest thing an Extension slot
+    /// draws and sets `extensionFlank`.
+    @ViewBuilder private func extensionGlyph(_ item: NotchExtension) -> some View {
+        if item.name.lowercased() == "vpn" {
+            Text("VPN")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.5), lineWidth: 1)
+                }
+        } else {
+            Image(systemName: item.symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 17, height: 18)
+        }
     }
 
     private var extensionSeparator: some View {
@@ -268,7 +300,8 @@ struct NotchView: View {
     private func extensionTint(_ item: NotchExtension) -> Color {
         switch item.name.lowercased() {
         case "claude": .orange
-        case "vpn": .green
+        // Deliberately not tinted: the VPN mark is a bordered word, and a
+        // coloured one reads as a status light rather than the badge iOS draws.
         default: .white.opacity(0.85)
         }
     }

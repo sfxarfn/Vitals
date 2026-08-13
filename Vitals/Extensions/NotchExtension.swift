@@ -8,10 +8,12 @@ struct NotchExtension: Equatable, Identifiable {
     var name: String
     var startedAt: Date
 
+    /// VPN is absent on purpose — it draws the iOS word badge instead of a
+    /// symbol, in `NotchView.extensionGlyph`. Any name that reaches the default
+    /// here is a condition nobody has drawn a mark for yet.
     var symbol: String {
         switch name.lowercased() {
         case "claude": "sparkles"
-        case "vpn": "lock.shield.fill"
         default: "puzzlepiece.extension.fill"
         }
     }

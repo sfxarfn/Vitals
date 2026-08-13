@@ -7,7 +7,10 @@ How the notch looks and moves. What it says is [`product.md`](product.md).
 - One outline in every state: the notch silhouette, flaring outward at the top
   corners so it grows out of the bezel rather than sitting on it.
 - Opaque black, always. The panel reads as more bezel, never as a window.
-- Idle is flush with the bezel. Anything grown lifts off it and casts a shadow.
+- Idle, Events, Activities and Extensions remain visually flush with the bezel
+  and cast no shadow, even when their outline grows horizontally.
+- Only Interactions lift off the bezel: Peek and Panel cast the tight contact
+  shadow and wide ambient shadow that distinguish a surface you can reach into.
 
 ## Layout
 
@@ -56,9 +59,10 @@ menu bar, so the question is always *what can come out*, never what can fit.
   to measure, and the word is what is left to say. A glyph beats a label.
 - **Each side is bought separately.** A flank pays for what it holds, not for
   what the other one holds.
-- **Extensions are outboard.** Each buys one icon-wide strip beyond the current
+- **Extensions are outboard.** Each buys one mark-wide strip beyond the current
   state's calibrated flank, separated by a hairline. The earliest active
-  Extension takes the right strip; the next takes the left.
+  Extension takes the right strip; the next takes the left. The strip is sized
+  to the widest mark any of them draws — the VPN word badge, not a plain icon.
 - **A lean has to be legible.** Off-centre by a few points reads as a shape that
   failed to line up, not as a decision. A lean worth keeping comes from the two
   sides holding genuinely different things — a whole flank missing, an icon

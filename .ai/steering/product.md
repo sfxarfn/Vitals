@@ -130,4 +130,7 @@ Panel is that Interaction opened further.
   it. Overlapping Claude sessions collapse into one icon and cannot clear one
   another.
 - **VPN Connected** — a real tunnel interface is up with an address. Telemetry
-  owns both edges of the lifecycle; it is not an Event and has no timer.
+  owns both edges of the lifecycle; it is not an Event and has no timer. Its
+  mark is the word in a box, the way iOS marks the same condition — no lock and
+  no shield, both of which already mean "encrypted" rather than "routed
+  elsewhere". Peek draws the same badge in its network row.

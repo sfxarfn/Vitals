@@ -54,7 +54,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 |---|---|
 | [`NotchState.swift`](../Vitals/Notch/NotchState.swift) | `NotchState` (every shape, grouped by category), `NotchMetrics` (every width, each a named ceiling), and `flankSlot` — the one place content is pinned against the camera housing. |
 | [`NotchController.swift`](../Vitals/Notch/NotchController.swift) | Owns the `NSPanel`, finds the notch, drives hover and drag, queues what the notch shows and arbitrates the two sides. The one `@MainActor` hub. |
-| [`NotchView.swift`](../Vitals/Notch/NotchView.swift) | The black shape: growth, shadows, edge glow, and the one switch that routes each state to its category. |
+| [`NotchView.swift`](../Vitals/Notch/NotchView.swift) | The black shape: growth, Interaction-only shadows, edge glow, and the one switch that routes each state to its category. |
 | [`NotchShape.swift`](../Vitals/Notch/NotchShape.swift) | The outward-flaring notch outline. Third-party, see its header. |
 | [`Marks.swift`](../Vitals/Notch/Marks.swift) | The Bluetooth and AirDrop glyphs, drawn by hand — SF Symbols ships neither. |
 | [`CGSSpace.swift`](../Vitals/Notch/CGSSpace.swift) | Private-API window space, so the panel survives a space swipe. |
