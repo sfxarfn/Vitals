@@ -21,9 +21,11 @@ Xcode to install it.
 3. In Finder, right-click `Vitals.app` and choose **Compress “Vitals”**. Transfer
    the resulting `Vitals.zip` using AirDrop, an external drive, or another
    trusted private channel. Compressing first keeps the app bundle intact.
-4. If you use command notifications, also copy `vitals-notify` from
-   `~/.local/bin`. It is a separate executable and is not contained in
-   `Vitals.app`.
+4. If you use command notifications, also transfer `bin/vitals-notify`. It is a
+   separate executable and is not contained in `Vitals.app`.
+5. If Xcode should report exact build lifecycles, transfer the three
+   `installation-files/xcode-build-*.sh` scripts too. Keep their filenames
+   unchanged so an update can replace them without reconfiguring Xcode.
 
 ### Install on the new Mac
 
@@ -44,18 +46,21 @@ Right-click the notch to open Settings or quit the app.
 
 Open Vitals Settings by right-clicking the notch.
 
-- Under **Permissions**, choose **Grant…** for Accessibility, then enable Vitals
-  in **System Settings → Privacy & Security → Accessibility**. This is required
-  for automatic Xcode progress and verdict detection. If Vitals is already
-  checked but cannot read Xcode, remove it from the list and add the copy in
-  `/Applications` again.
+- **Track build progress** under **Xcode** defaults on. Leave it enabled if the
+  notch should show Xcode's live task counter, then under **Permissions** choose
+  **Grant…** for Accessibility and enable Vitals in **System Settings → Privacy
+  & Security → Accessibility**. If Vitals is already checked but cannot read
+  Xcode, remove it from the list and add the copy in `/Applications` again.
+  Turn progress tracking off to disable the DerivedData listener and all Xcode
+  Accessibility reads; lifecycle Events reported by Xcode Behaviors are
+  unaffected.
 - Allow Bluetooth access when macOS asks if you want accessory connection and
   battery Events.
 - Enable **Launch at login** under **General** if Vitals should start after each
   login.
 
-Command notifications, power, thermal, CPU, and network telemetry do not depend
-on the Accessibility permission.
+Command notifications—including Xcode Behavior lifecycles—power, thermal, CPU,
+and network telemetry do not depend on the Accessibility permission.
 
 ### Install the command
 
@@ -83,6 +88,54 @@ vitals-notify event installation-succeeded
 
 When updating Vitals, transfer the new `Vitals.app` and `vitals-notify` together
 so both sides of the command protocol stay on the same version.
+
+### Install Xcode Behavior scripts
+
+This is optional. It makes Xcode the authority for build start, success and
+failure. **Track build progress** is a separate setting: it may be disabled to
+avoid Accessibility while these lifecycle Events continue to work.
+
+From the repository or transferred folder, install the three scripts at stable
+paths:
+
+```sh
+mkdir -p "$HOME/.local/libexec/vitals"
+/usr/bin/install -m 755 ./installation-files/xcode-build-started.sh \
+  "$HOME/.local/libexec/vitals/xcode-build-started.sh"
+/usr/bin/install -m 755 ./installation-files/xcode-build-succeeded.sh \
+  "$HOME/.local/libexec/vitals/xcode-build-succeeded.sh"
+/usr/bin/install -m 755 ./installation-files/xcode-build-failed.sh \
+  "$HOME/.local/libexec/vitals/xcode-build-failed.sh"
+```
+
+Then configure Xcode:
+
+1. Open **Xcode → Settings → Behaviors → Build**.
+2. Expand **When build starts**, choose **Add → Run Script**, and select
+   `~/.local/libexec/vitals/xcode-build-started.sh`.
+3. Expand **When build succeeds**, choose **Add → Run Script**, and select
+   `~/.local/libexec/vitals/xcode-build-succeeded.sh`.
+4. Expand **When build fails**, choose **Add → Run Script**, and select
+   `~/.local/libexec/vitals/xcode-build-failed.sh`.
+
+The `.local` directory is hidden in Xcode's file picker. Press **Command-Shift-G**,
+enter `~/.local/libexec/vitals`, and choose the corresponding script.
+
+Verify the hooks without starting a build:
+
+```sh
+"$HOME/.local/libexec/vitals/xcode-build-started.sh"
+"$HOME/.local/libexec/vitals/xcode-build-succeeded.sh"
+```
+
+The first command should show an Xcode Build Activity. The second should close
+it and show an Xcode Build Succeeded Event. After that, perform one real Xcode
+build and confirm the same lifecycle fires automatically. Xcode 26 has no
+separate build-cancelled Behavior; confirm the failed hook runs for cancellation
+on the installed Xcode version before relying on that transition.
+
+To update the hooks later, reinstall all three files at the same paths. Their
+Xcode Behavior selections remain valid.
 
 ## Command notifications
 
@@ -115,19 +168,30 @@ previous Activity resumes when it stops.
 
 ## Uninstalling Vitals
 
-1. Right-click the notch, open **Settings**, and disable **Launch at login**.
-2. Right-click the notch again and choose **Quit Vitals**.
-3. Move `/Applications/Vitals.app` to the Trash.
-4. Remove the installed command:
+1. If Xcode Behaviors were configured, open **Xcode → Settings → Behaviors →
+   Build**. Under **When build starts**, **When build succeeds**, and **When
+   build fails**, select the Vitals Run Script action and choose **Remove**.
+   Remove these actions before deleting their files so Xcode does not retain
+   dead script hooks.
+2. Right-click the notch, open **Settings**, and disable **Launch at login**.
+3. Right-click the notch again and choose **Quit Vitals**.
+4. Move `/Applications/Vitals.app` to the Trash.
+5. Remove the installed command and Behavior scripts:
 
    ```sh
    rm "$HOME/.local/bin/vitals-notify"
+   rm "$HOME/.local/libexec/vitals/xcode-build-started.sh" \
+      "$HOME/.local/libexec/vitals/xcode-build-succeeded.sh" \
+      "$HOME/.local/libexec/vitals/xcode-build-failed.sh"
+   rmdir "$HOME/.local/libexec/vitals"
    ```
 
-5. Open **System Settings → Privacy & Security → Accessibility**, select Vitals,
+   Skip any path that was not installed. `rmdir` removes the directory only if
+   it is empty.
+6. Open **System Settings → Privacy & Security → Accessibility**, select Vitals,
    and remove it with the minus button. Remove or disable it under **Bluetooth**
    there as well if it remains listed.
-6. Check **System Settings → General → Login Items & Extensions** and remove any
+7. Check **System Settings → General → Login Items & Extensions** and remove any
    remaining Vitals login item. This is only necessary if the app was deleted
    before **Launch at login** was disabled.
 

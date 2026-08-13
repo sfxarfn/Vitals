@@ -32,10 +32,6 @@ final class NotchController {
     /// More than one shell may be doing work. The newest Activity owns the
     /// resting notch; when it stops, the next newest one underneath resumes.
     private var externalActivities: [String: ExternalActivity] = [:]
-    /// An explicit build lifecycle is authoritative. Keep the heuristic watcher
-    /// quiet for one grace window after stop so its delayed final read cannot
-    /// put a stale counter or a duplicate verdict back on screen.
-    private var buildWatcherSuppressedUntil = Date.distantPast
     /// Events waiting for the notch, in the order they arrived.
     private var queue: [NotchState] = []
     /// The one-sided Events currently up, keyed by the side they own, and a
@@ -81,16 +77,7 @@ final class NotchController {
             guard let self, self.atRest else { return }
             state = resting
         }
-        // How it *ended* is an Event, and queues like the rest of them. No
-        // cooldown: that exists for a threshold flapping around its edge, and a
-        // build ends once. Suppressing the second one would be dropping news.
-        builds.onVerdict = { [weak self] finished in
-            guard let self else { return }
-            guard Date.now >= self.buildWatcherSuppressedUntil else { return }
-            queue.append(.verdict(finished))
-            presentNext()
-        }
-        builds.start()
+        builds.start(enabled: UserDefaults.standard.bool(forKey: BuildWatcher.progressSettingKey))
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -218,10 +205,16 @@ final class NotchController {
     /// The floor the notch falls back to. Idle, unless an Activity is running —
     /// a build replaces idle as the resting state for as long as it lasts.
     private var resting: NotchState {
+        // A Behavior lifecycle supplies the stable start/end underneath; when
+        // optional AX progress answers, it enriches that same Activity.
+        if let build = builds.progress,
+           externalActivities.values.contains(where: { isBuildActivity($0.name) }) {
+            return .building(build)
+        }
         if let explicit = externalActivities.values.max(by: { $0.startedAt < $1.startedAt }) {
             return .externalActivity(explicit)
         }
-        if Date.now >= buildWatcherSuppressedUntil, let build = builds.progress {
+        if let build = builds.progress {
             return .building(build)
         }
         return .idle
@@ -244,14 +237,14 @@ final class NotchController {
 
         case .activityStart(let activity):
             externalActivities[activity.id] = activity
-            if isBuildActivity(activity.name) { buildWatcherSuppressedUntil = .distantFuture }
+            if isBuildActivity(activity.name) { builds.explicitLifecycleStarted() }
             if atRest { state = resting }
 
         case .activityStop(let id):
             let stopped = externalActivities.removeValue(forKey: id)
             if let stopped, isBuildActivity(stopped.name),
                !externalActivities.values.contains(where: { isBuildActivity($0.name) }) {
-                buildWatcherSuppressedUntil = .now + 10
+                builds.explicitLifecycleEnded()
             }
             if atRest { state = resting }
         }
@@ -355,9 +348,11 @@ final class NotchController {
 
     // MARK: Permissions
 
-    /// Reading Xcode's toolbar is the only way to see a build, and that needs
-    /// the Accessibility grant. Settings owns the asking; the watcher owns the
-    /// state, which flips back to false every time a dev build is re-signed.
+    /// Xcode's toolbar is the only source for live progress, and reading it
+    /// needs Accessibility. Settings owns both the opt-in and the grant; the
+    /// grant flips back to false every time a dev build is re-signed.
+    var buildProgressEnabled: Bool { builds.enabled }
+    func setBuildProgressEnabled(_ enabled: Bool) { builds.setEnabled(enabled) }
     var buildAccess: Bool { builds.trusted }
     func requestBuildAccess() { builds.requestAccess() }
 

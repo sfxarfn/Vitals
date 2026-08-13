@@ -8,9 +8,8 @@ import ApplicationServices
 
 /// What Xcode's toolbar activity view is saying right now.
 struct BuildProgress: Equatable {
-    /// How a run finished. Always nil on `progress` — the watcher only ever
-    /// publishes a running build — and set on the copy handed to `onVerdict`,
-    /// which is what the Event draws.
+    /// How a run finished. Always nil on `progress`; non-nil values are used by
+    /// preview fixtures and the verdict presentation model.
     ///
     /// Two outcomes, not three: a cancel is filed as a failure. What the notch
     /// is for is telling you the thing you walked away from is done, and a run
@@ -19,9 +18,7 @@ struct BuildProgress: Equatable {
     enum Ending: Equatable { case succeeded, failed }
 
     var label: String
-    /// What kind of run this is, as a noun — "Build", "Archive". `label` says
-    /// what is happening to it and stops naming it once the run ends badly, so
-    /// this is what the verdict pill puts under Xcode's icon.
+    /// What kind of run this is, as a noun — "Build", "Archive".
     var job = "Build"
     var done: Int
     var total: Int
@@ -34,7 +31,7 @@ struct BuildProgress: Equatable {
     var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
 }
 
-/// Reads Xcode's build state over the Accessibility API.
+/// Reads Xcode's live build progress over the Accessibility API.
 ///
 /// There is no other channel: the task counter is Xcode's own internal
 /// progress, not written to DerivedData and not announced anywhere, so the
@@ -47,20 +44,22 @@ struct BuildProgress: Equatable {
 @Observable
 @MainActor
 final class BuildWatcher {
+    static let progressSettingKey = "trackXcodeBuildProgress"
+
     private(set) var progress: BuildProgress?
+    private(set) var enabled = false
     /// Re-read every tick, never cached: a dev build is re-signed on every
     /// compile, which invalidates the grant while the row in System Settings
     /// stays checked. Settings watches this to know when to offer the button.
     private(set) var trusted = AXIsProcessTrusted()
     var onChange: (() -> Void)?
-    /// Fired once, when a run ends. The Activity is already over by then —
-    /// `progress` has gone back to nil — and how it ended is an Event the notch
-    /// queues, so this watcher does not own that pill's clock.
-    var onVerdict: ((BuildProgress) -> Void)?
 
     private var timer: Timer?
     private var stream: FSEventStreamRef?
     private var lastWrite = Date.distantPast
+    /// A Behavior result can land while Xcode is still flushing DerivedData.
+    /// Ignore those tail writes so a finished Activity cannot briefly return.
+    private var ignoreDiskUntil = Date.distantPast
     /// Consecutive reads that found nothing while the disk was still busy, and
     /// the earliest the next read may run. Every way this watcher can go blind —
     /// a localized Xcode, a moved activity view, a layout `skipRoles` hides —
@@ -75,8 +74,7 @@ final class BuildWatcher {
     private var status: AXUIElement?
     private var icon: NSImage?
     private var prompted = false
-    /// Text from the most recent scan, kept only so the tick that loses the
-    /// counter can read the verdict out of the same walk that lost it.
+    /// Text from the most recent scan, retained for the DEBUG miss report.
     private var lastText = ""
     /// When the counter stopped answering. Nil while it is still being read.
     private var lostAt: Date?
@@ -102,10 +100,9 @@ final class BuildWatcher {
     /// How long the disk may stay quiet before the poll gives up. Linking and
     /// the tail of a build both go silent for a few seconds without ending.
     private static let grace: TimeInterval = 6
-    /// How long the toolbar gets to publish its result text before the counter
-    /// itself is used to guess one. Xcode swaps the activity view's contents a
-    /// beat after the counter goes, so reading it on the very first miss finds
-    /// the view empty. Calibration knob.
+    /// How long a missing counter is held before progress disappears. One AX
+    /// miss must not blink a live Activity; outcomes arrive separately through
+    /// Xcode Behaviors and never get guessed here.
     private static let settle: TimeInterval = 2
     /// Ceiling on the miss counter, so the gap tops out at `live << 4` — 16s.
     /// A blind watcher that rechecks every 16s still recovers the moment Xcode
@@ -119,10 +116,10 @@ final class BuildWatcher {
         live * Double(1 << min(max(misses, 0), maxBackoff))
     }
 
-    func start() {
-        watchDerivedData()
+    func start(enabled: Bool) {
         // No timer here. Without it the resting cost of this whole file is one
-        // kernel-pushed callback that never arrives until a build writes.
+        // kernel-pushed callback that never arrives until a build writes — and
+        // with progress disabled even that stream does not exist.
         //
         // The Settings row still needs a fresh answer, and activating Vitals is
         // exactly when someone is looking at it — including on the way back
@@ -130,14 +127,43 @@ final class BuildWatcher {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trusted = AXIsProcessTrusted() }
+            MainActor.assumeIsolated {
+                guard let self, self.enabled else { return }
+                self.trusted = AXIsProcessTrusted()
+            }
         }
+        setEnabled(enabled)
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != self.enabled else { return }
+        self.enabled = enabled
+        if enabled {
+            trusted = AXIsProcessTrusted()
+            watchDerivedData()
+        } else {
+            stop()
+            stopWatchingDerivedData()
+        }
+    }
+
+    /// An explicit Xcode Behavior lifecycle owns the start and finish. Progress
+    /// may enrich it while it runs, but a previous build's tail must not leak
+    /// into the next one.
+    func explicitLifecycleStarted() {
+        ignoreDiskUntil = .distantPast
+    }
+
+    func explicitLifecycleEnded() {
+        stop()
+        ignoreDiskUntil = .now + 10
     }
 
     /// Xcode is writing build products, so something is compiling. Cheap enough
     /// to be the gate: the kernel pushes this, and it stays silent all day when
     /// no build runs.
     private func diskActivity() {
+        guard enabled, Date.now >= ignoreDiskUntil else { return }
         lastWrite = .now
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.live, repeats: true) { [weak self] _ in
@@ -157,6 +183,7 @@ final class BuildWatcher {
         nextRead = .distantPast
         lostAt = nil
         lastText = ""
+        lastWrite = .distantPast
         publish(nil)
     }
 
@@ -187,36 +214,21 @@ final class BuildWatcher {
         icon = icon ?? xcode.icon
         let hit = read(pid: xcode.processIdentifier)
 
-        // The counter was there and is gone now. That is either the end of the
-        // run or a tick that could not read the toolbar, and the two look
-        // identical for the first moment — so the pill stays up while we find
-        // out, rather than blinking off and back on.
-        if hit == nil, let running = progress {
+        // The counter was there and is gone now. Hold the last progress briefly
+        // because one failed AX read is not a lifecycle event. After that the
+        // Activity may fall back to the explicit Behavior lifecycle underneath.
+        if hit == nil, progress != nil {
             let lost = lostAt ?? .now
             lostAt = lost
             #if DEBUG
             print("[BuildWatcher] counter gone — \(lastText)")
             #endif
-            guard let ending = verdict(lastText)
-                    ?? (Date.now.timeIntervalSince(lost) >= Self.settle ? Self.guess(running) : nil)
-            else { nextRead = .now + Self.live; return }
-
-            // Both words are verdicts, never the job in past tense: the noun
-            // opposite already says what ended, so this flank only has to say
-            // how. "Built" beside "Build" was the same word twice.
-            let finished = BuildProgress(
-                label: ending == .succeeded ? "Success" : "Failed",
-                job: running.job,
-                done: running.done, total: running.total, icon: icon, ending: ending)
-            // Tear down first, then hand the verdict over: the Activity has to
-            // be gone before the Event is queued, or the pill would be arbitrated
-            // against a build that already finished — and would fall back to it
-            // when it times out.
-            stop()
-            onVerdict?(finished)
-            return
+            guard Date.now.timeIntervalSince(lost) >= Self.settle else {
+                nextRead = .now + Self.live
+                return
+            }
         }
-        lostAt = nil
+        if hit != nil { lostAt = nil }
 
         // Only a busy disk gets here, so backing off costs nothing on a build
         // that reads fine — a hit resets to the live rate on the next tick.
@@ -232,6 +244,7 @@ final class BuildWatcher {
     /// than trusting the dialog to land. The activate matters too: an accessory
     /// app has no Dock icon, so its dialog can open behind whatever is in front.
     func requestAccess() {
+        guard enabled else { return }
         NSApp.activate()
         _ = AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
@@ -260,8 +273,8 @@ final class BuildWatcher {
         // send every tick back through the full walk — the one path that
         // actually costs Xcode anything. These are ceilings, not costs: the
         // cached subtree is a dozen elements whatever the budget says.
-        // Everything read this tick, across every window walked, because the
-        // verdict may be sitting in a window the counter never came from.
+        // Everything read this tick, across every window walked, because a
+        // localized or rearranged activity view may move the counter elsewhere.
         lastText = ""
 
         if let status {
@@ -364,35 +377,6 @@ final class BuildWatcher {
         return BuildProgress(label: job.label, job: job.noun, done: done, total: total, icon: icon)
     }
 
-    /// The verdict Xcode leaves in the activity view once the counter goes away:
-    /// "Archive Succeeded", "Build Failed", "Canceled". Read once, at the tick
-    /// the counter vanishes — the same words sit there all day afterwards, so
-    /// anything that read them unprompted would announce the last build forever.
-    ///
-    /// The cancel stems are still matched even though they land on the same
-    /// ending as a failure: "Canceled" contains neither "fail" nor "success", so
-    /// without them a stopped run reads as no verdict at all and falls through
-    /// to the guess below.
-    private func verdict(_ text: String) -> BuildProgress.Ending? {
-        for (stem, ending) in [("cancel", BuildProgress.Ending.failed), ("stopp", .failed),
-                               ("fail", .failed), ("error", .failed),
-                               ("succeed", .succeeded), ("success", .succeeded)]
-        where text.localizedCaseInsensitiveContains(stem) { return ending }
-        return nil
-    }
-
-    /// No words to go on — Xcode does not always leave a result in the activity
-    /// view, and a cancel can clear it outright. The counter is the only other
-    /// evidence: a run that vanished near its total finished, one that vanished
-    /// halfway did not.
-    ///
-    /// ponytail: a threshold, not a real signal. The counter is Xcode's own
-    /// estimate and drifts, so this only has to separate "nearly done" from
-    /// "nowhere near". Parse the build log if it ever needs to be exact.
-    private static func guess(_ running: BuildProgress) -> BuildProgress.Ending {
-        running.fraction >= 0.95 ? .succeeded : .failed
-    }
-
     // MARK: The gate
 
     /// Watches DerivedData for build products landing. This is what keeps the
@@ -404,6 +388,7 @@ final class BuildWatcher {
     /// The `/Build/` filter is what separates a build from indexing, which
     /// writes next door in `Index.noindex` after nearly every keystroke.
     private func watchDerivedData() {
+        guard enabled, stream == nil else { return }
         // Honour a moved DerivedData; Xcode keeps the override in its own
         // defaults, and an absolute path there wins over the default location.
         let custom = UserDefaults(suiteName: "com.apple.dt.Xcode")?
@@ -442,6 +427,13 @@ final class BuildWatcher {
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
         self.stream = stream
+    }
+
+    private func stopWatchingDerivedData() {
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        self.stream = nil
     }
 
     // MARK: AX plumbing

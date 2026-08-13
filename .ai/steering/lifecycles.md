@@ -55,3 +55,17 @@ completion from CPU load.
 This is complementary to CPU monitoring. CPU answers whether the machine is
 under sustained load; an explicit lifecycle answers what work is running and
 how it ended. Neither substitutes for the other.
+
+## Xcode builds
+
+Xcode Behaviors are the authoritative lifecycle: their scripts report build
+start, success and failure through `vitals-notify`. The Accessibility watcher is
+optional enrichment that reads Xcode's live task counter; it does not infer an
+outcome from the counter disappearing.
+
+**Track build progress** in Settings controls the watcher. It defaults on to
+preserve existing behavior. Turning it off tears down both the DerivedData
+FSEvent stream and any active Accessibility timer, requires no Accessibility
+grant, and leaves Behavior-reported starts and results working. Turning it on
+starts the FSEvent gate; AX polling still exists only while build writes are
+arriving.

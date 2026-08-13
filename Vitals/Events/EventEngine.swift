@@ -308,11 +308,11 @@ struct EventEngine {
     private func thermalRank(_ state: ProcessInfo.ThermalState?) -> Int {
         guard let state else { return -1 }
         switch state {
-        case .nominal:  0
-        case .fair:     1
-        case .serious:  2
-        case .critical: 3
-        @unknown default: -1
+        case .nominal:  return 0
+        case .fair:     return 1
+        case .serious:  return 2
+        case .critical: return 3
+        @unknown default: return -1
         }
     }
 

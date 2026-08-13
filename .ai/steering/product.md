@@ -103,7 +103,8 @@ the notch falls to Idle if it finished meanwhile.
 ### Activities
 
 - **Xcode**
-  - **Build In Progress** — what is running, and how far in
+  - **Build In Progress** — what is running; optionally enriched with Xcode's
+    live task count when **Track build progress** is enabled
 - **Commands**
   - **Reported Activity** — long-running work explicitly opens a lifecycle and
     closes it when done. It shows that it is running but invents no progress;
