@@ -60,7 +60,8 @@ menu bar, so the question is always *what can come out*, never what can fit.
 - **Each side is bought separately.** A flank pays for what it holds, not for
   what the other one holds.
 - **Extensions are outboard.** Each buys one mark-wide strip beyond the current
-  state's calibrated flank, separated by a hairline. The earliest active
+  state's calibrated flank, separated by a hairline — and only then: on an idle
+  notch the marks are all there is, so nothing needs separating. The earliest active
   Extension takes the right strip; the next takes the left. The strip is sized
   to the widest mark any of them draws — the VPN word badge, not a plain icon.
 - **A lean has to be legible.** Off-centre by a few points reads as a shape that

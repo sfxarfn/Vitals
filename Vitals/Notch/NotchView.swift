@@ -261,24 +261,31 @@ struct NotchView: View {
     /// outward — the same geometry rule as a normal flank.
     private func extensionMark(_ item: NotchExtension, side: HorizontalEdge) -> some View {
         HStack(spacing: 7) {
-            if side == .trailing { extensionSeparator }
+            if side == .trailing, separatesFromState { extensionSeparator }
             extensionGlyph(item).foregroundStyle(extensionTint(item))
-            if side == .leading { extensionSeparator }
+            if side == .leading, separatesFromState { extensionSeparator }
         }
-        .frame(width: metrics.extensionFlank,
+        .frame(width: metrics.extensionFlank(for: state),
                alignment: side == .leading ? .trailing : .leading)
         .frame(height: metrics.notch.height)
         .accessibilityLabel("\(item.name) active")
     }
 
-    /// One mark per condition, and VPN is the one that is not a symbol: SF
-    /// Symbols ships no tunnel glyph, and every lock and shield in it reads as
-    /// "encrypted" rather than "routed elsewhere". The three letters in a box,
-    /// the way iOS marks the same condition — outlined, not filled, because that
-    /// is the mark people already know. It is the widest thing an Extension slot
-    /// draws and sets `extensionFlank`.
+    /// One mark per condition. The two Vitals actually ships are drawn by hand
+    /// in `Marks.swift` — neither is a system symbol:
+    ///
+    /// - **VPN** — the three letters in a box, the way iOS marks the same
+    ///   condition. Outlined, not filled, because that is the mark people
+    ///   already know. Widest thing a slot draws, and it sets `extensionFlank`.
+    ///   Every lock and shield SF Symbols offers reads as "encrypted" rather
+    ///   than "routed elsewhere".
+    /// - **Claude** — its own burst, rocking while the turn runs.
+    ///
+    /// Anything else falls through to the generic symbol, which is what an
+    /// Extension nobody has drawn a mark for looks like.
     @ViewBuilder private func extensionGlyph(_ item: NotchExtension) -> some View {
-        if item.name.lowercased() == "vpn" {
+        switch item.name.lowercased() {
+        case "vpn":
             Text("VPN")
                 .font(.system(size: 8, weight: .bold, design: .rounded))
                 .padding(.horizontal, 4)
@@ -286,12 +293,22 @@ struct NotchView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.5), lineWidth: 1)
                 }
-        } else {
+        case "claude":
+            // Bigger than the symbol box beside it: a burst is mostly the gaps
+            // between its spokes, so the same measured size reads smaller.
+            ClaudeWorkingMark().frame(width: 20, height: 20)
+        default:
             Image(systemName: item.symbol)
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: 17, height: 18)
         }
     }
+
+    /// The hairline says "this is a different thing from what is beside it", so
+    /// it only exists while something *is* beside it. On an idle notch the marks
+    /// are all there is, and a rule with nothing on the far side of it reads as
+    /// a stray line across the bezel.
+    private var separatesFromState: Bool { state != .idle }
 
     private var extensionSeparator: some View {
         Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 14)

@@ -1,8 +1,9 @@
 # .ai — start here
 
 Context for agents working on Vitals. Read [`steering/product.md`](steering/product.md),
-[`steering/design.md`](steering/design.md), and
-[`steering/lifecycles.md`](steering/lifecycles.md) before proposing anything;
+[`steering/design.md`](steering/design.md),
+[`steering/lifecycles.md`](steering/lifecycles.md), and
+[`steering/structure.md`](steering/structure.md) before proposing anything;
 most "obvious improvements" are already decided against, with reasons.
 
 The steering docs are the **target**, not a description of the code. Where the
@@ -35,6 +36,7 @@ is in git history: `git show d02f2ba:.ai/steering/product.md`.
 | [`steering/product.md`](steering/product.md) | What Vitals is and what the notch says. The three exclusive categories — **Interactions**, **Events**, **Activities** — plus compositional **Extensions**, Idle as the floor and Glow as Event residue. |
 | [`steering/design.md`](steering/design.md) | How the notch looks and moves: shape, flank layout, how width is bought, which states may grow vertically, and the grow/shrink rule. |
 | [`steering/lifecycles.md`](steering/lifecycles.md) | How conditions and explicit work begin and end, including the binding decision to keep CPU monitoring on adaptive in-process polling. |
+| [`steering/structure.md`](steering/structure.md) | How the repository is organized, how the runtime pieces connect, and where new code belongs. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Build rules. Short version: never run `xcodebuild` or `swift build`, never launch the app — the user does that in Xcode. Make the edit, say what to look for, stop. |
 
 The main [`README.md`](../README.md) is the canonical installation guide. Any
@@ -56,7 +58,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`NotchController.swift`](../Vitals/Notch/NotchController.swift) | Owns the `NSPanel`, finds the notch, drives hover and drag, queues what the notch shows and arbitrates the two sides. The one `@MainActor` hub. |
 | [`NotchView.swift`](../Vitals/Notch/NotchView.swift) | The black shape: growth, Interaction-only shadows, edge glow, and the one switch that routes each state to its category. |
 | [`NotchShape.swift`](../Vitals/Notch/NotchShape.swift) | The outward-flaring notch outline. Third-party, see its header. |
-| [`Marks.swift`](../Vitals/Notch/Marks.swift) | The Bluetooth and AirDrop glyphs, drawn by hand — SF Symbols ships neither. |
+| [`Marks.swift`](../Vitals/Notch/Marks.swift) | The Bluetooth, AirDrop and Claude glyphs, drawn by hand — SF Symbols ships none of them. Claude's is the exception: the real burst, bundled as the `ClaudeLogo` template asset and turned slowly. |
 | [`CGSSpace.swift`](../Vitals/Notch/CGSSpace.swift) | Private-API window space, so the panel survives a space swipe. |
 
 ### `Events/` — the machine talking

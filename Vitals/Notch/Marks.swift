@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Two glyphs SF Symbols does not ship, drawn by hand rather than looked up.
+// Glyphs SF Symbols does not ship, drawn by hand rather than looked up.
 
 // MARK: Bluetooth
 
@@ -44,5 +44,35 @@ struct AirDropMark: Shape {
                         clockwise: false)
         }
         return path
+    }
+}
+
+// MARK: Claude
+
+/// The burst while Claude is working: the real mark, turning slowly.
+///
+/// The turn is deliberately slower than anything that reads as a spinner — it
+/// only keeps the burst from settling into one pose over the minutes this
+/// condition can last. An earlier version drew the spokes by hand and pulsed
+/// them; the asset replaced it. `git log` has the shape if the pulse is wanted
+/// back, but it cannot be had on top of a bitmap.
+///
+/// Its own view, so the loop lives on a `@State` that appears with the mark and
+/// dies with it. The notch's growth transaction only nils animations driven by
+/// its own key, so this keeps running through a state change underneath it.
+struct ClaudeWorkingMark: View {
+    @State private var running = false
+
+    var body: some View {
+        // The real burst, shipped as an asset rather than approximated: the
+        // spokes are uneven in a way a generated ring is not, and the drawn
+        // version existed only because that was hard to reach by hand. Template
+        // asset, so `extensionTint` still colours it like every other mark.
+        Image("ClaudeLogo")
+            .resizable()
+            .scaledToFit()
+            .rotationEffect(.degrees(running ? 360 : 0))
+            .animation(.linear(duration: 11).repeatForever(autoreverses: false), value: running)
+            .onAppear { running = true }
     }
 }

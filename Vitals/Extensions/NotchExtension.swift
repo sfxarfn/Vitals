@@ -8,15 +8,11 @@ struct NotchExtension: Equatable, Identifiable {
     var name: String
     var startedAt: Date
 
-    /// VPN is absent on purpose — it draws the iOS word badge instead of a
-    /// symbol, in `NotchView.extensionGlyph`. Any name that reaches the default
-    /// here is a condition nobody has drawn a mark for yet.
-    var symbol: String {
-        switch name.lowercased() {
-        case "claude": "sparkles"
-        default: "puzzlepiece.extension.fill"
-        }
-    }
+    /// The fallback mark, and only that: both conditions Vitals ships draw hand
+    /// -made glyphs in `NotchView.extensionGlyph` instead — a word badge for VPN
+    /// and Claude's own burst — because SF Symbols has neither. Anything that
+    /// reaches here is a condition nobody has drawn a mark for yet.
+    var symbol: String { "puzzlepiece.extension.fill" }
 }
 
 /// The two outboard slots after active Extensions have been ordered. The first

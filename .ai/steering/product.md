@@ -128,7 +128,11 @@ Panel is that Interaction opened further.
 - **Claude In Progress** — Claude Code is processing the current turn. A
   `UserPromptSubmit` hook begins it; `Stop`, `StopFailure` or `SessionEnd` ends
   it. Overlapping Claude sessions collapse into one icon and cannot clear one
-  another.
+  another. Its mark is Claude's own burst, alive while the turn runs: the spokes
+  draw in and push back out around the ring, over a much slower turn. It is the
+  one thing in the notch that moves on its own clock. The motion is in the
+  spokes, not the rotation — a mark whose revolutions you can follow is a
+  spinner, and a condition that lasts minutes must not read as one.
 - **VPN Connected** — a real tunnel interface is up with an address. Telemetry
   owns both edges of the lifecycle; it is not an Event and has no timer. Its
   mark is the word in a box, the way iOS marks the same condition — no lock and

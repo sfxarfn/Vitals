@@ -113,8 +113,23 @@ struct NotchMetrics {
     /// widest mark any Extension draws — ~25 with its box, against 17 for a
     /// plain icon. The rest is outward slack, and it is not padding: the bottom
     /// corner curves back in across the last few points of every flank, and a
-    /// bordered box is a shape whose edge shows the bite.
-    var extensionFlank: CGFloat = 46
+    /// bordered box is a shape whose edge shows the bite. 25 for the badge and
+    /// 13 of outward slack, because the bite is 6–9 and a bordered box shows
+    /// where it lands — this is the number that cannot be trimmed for looking
+    /// like air.
+    var extensionFlank: CGFloat = 38
+    /// What the hairline and the air on both sides of it cost, bought only while
+    /// the rule is actually drawn — on an idle notch the marks are all there is
+    /// and `NotchView.separatesFromState` leaves the rule out, so the slot must
+    /// not keep paying for it.
+    var extensionSeparatorFlank: CGFloat = 16
+
+    /// One Extension slot's width in a given state, separator included when that
+    /// state draws one. `NotchView` sizes the mark with this too, so the frame
+    /// and the shape growth cannot disagree.
+    func extensionFlank(for state: NotchState) -> CGFloat {
+        extensionFlank + (state == .idle ? 0 : extensionSeparatorFlank)
+    }
     var panelBodyHeight: CGFloat = 94
 
     // MARK: What a state buys
@@ -136,8 +151,9 @@ struct NotchMetrics {
     func flanks(for state: NotchState, extensions: ExtensionSlots) -> Flanks {
         var f = baseFlanks(for: state)
         let visible = visibleExtensions(state, extensions)
-        if visible.left != nil { f.left += extensionFlank }
-        if visible.right != nil { f.right += extensionFlank }
+        let slot = extensionFlank(for: state)
+        if visible.left != nil { f.left += slot }
+        if visible.right != nil { f.right += slot }
         return f
     }
 
@@ -212,7 +228,8 @@ struct NotchMetrics {
     /// Both Extension slots are reserved whether or not they are active: the
     /// window's frame is set once, while conditions can change afterwards.
     var windowSize: CGSize {
-        let widest = notch.width + statFlanks.left + statFlanks.right + extensionFlank * 2
+        let slot = extensionFlank + extensionSeparatorFlank
+        let widest = notch.width + statFlanks.left + statFlanks.right + slot * 2
         return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }
