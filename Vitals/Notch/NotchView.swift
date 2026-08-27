@@ -30,7 +30,9 @@ struct NotchView: View {
     @State var backHovered = false
     @State var panelBody: PanelBody = .shelf
     @State var batteryHovered = false
+    @State var clearHovered = false
     @State var thermalHovered = false
+    @State var networkHovered = false
 
     var size: CGSize { metrics.size(for: state, extensions: extensions) }
     private var lifted: Bool {
@@ -44,8 +46,16 @@ struct NotchView: View {
         default: false
         }
     }
-    private let topRadius: CGFloat = 22
-    private let bottomRadius: CGFloat = 28
+    /// Both radii are calibrated against a real camera housing, whose height
+    /// leaves room for a 22pt outward flare and a 28pt bottom curve to meet.
+    /// A synthetic notch is only menu-bar tall — the two curves then pass each
+    /// other, the path doubles back, and the sides pinch. Scale them with the
+    /// height that is actually there; a real housing is `1` and untouched.
+    private var radiusScale: CGFloat {
+        metrics.synthetic ? min(1, metrics.notch.height / 38) : 1
+    }
+    private var topRadius: CGFloat { 22 * radiusScale }
+    private var bottomRadius: CGFloat { 28 * radiusScale }
 
     // MARK: Growth
 
@@ -94,7 +104,7 @@ struct NotchView: View {
 
     private var shape: NotchShape {
         NotchShape(topCornerRadius: topRadius,
-                   bottomCornerRadius: lifted ? bottomRadius : 10)
+                   bottomCornerRadius: lifted ? bottomRadius : 10 * radiusScale)
     }
 
     // MARK: Body
@@ -351,11 +361,24 @@ struct NotchView: View {
     /// One labelled row of the panel's right-hand block, shared by the battery
     /// numbers and the thermal ones so the two readouts cannot drift apart in
     /// weight or spacing — they occupy the same slot and swap under each other.
-    func statLine(_ label: String, _ value: String) -> some View {
+    /// `dot` puts a small filled circle after the label, for a row whose news is
+    /// a state rather than a number — the value keeps saying what it measured
+    /// and the dot says whether that is the good version of it. Nil on every
+    /// row that has nothing to say, which is most of them.
+    func statLine(_ label: String, _ value: String, tint: Color = .white,
+                  dot: Color? = nil) -> some View {
         HStack(spacing: 8) {
             Text(label).foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1).minimumScaleFactor(0.8)
+            if let dot {
+                Circle().fill(dot).frame(width: 5, height: 5)
+                    // The label is followed by 8pt of nothing on every other
+                    // row, so the dot sits closer than that or it reads as its
+                    // own column instead of a mark on the label.
+                    .padding(.leading, -4)
+            }
             Spacer(minLength: 0)
-            Text(value).monospacedDigit().foregroundStyle(.white)
+            Text(value).monospacedDigit().foregroundStyle(tint)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .font(.system(size: 11, weight: .medium, design: .rounded))

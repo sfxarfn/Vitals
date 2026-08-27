@@ -65,7 +65,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 
 | File | Role |
 |---|---|
-| [`Telemetry.swift`](../Vitals/Events/Telemetry.swift) | Power, die temperature and CPU load. Push where macOS offers it, poll only CPU. |
+| [`Telemetry.swift`](../Vitals/Events/Telemetry.swift) | Power, die temperature, CPU load and the network link. Push where macOS offers it, poll only CPU. |
 | [`EventEngine.swift`](../Vitals/Events/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. `Signal` is one case per Event `product.md` lists under Power, Thermal and CPU — nothing else. Owns `Loudness` (pill or glow) and `Side`. Pure value type; has a `DEBUG` self-check. |
 | [`Accessory.swift`](../Vitals/Events/Accessory.swift) | Bluetooth accessory connect detection and battery. |
 | [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: sided, compact, accessory, audio lost. |
@@ -87,7 +87,8 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`PeekView.swift`](../Vitals/Interactions/PeekView.swift) | Peek: the two stat flanks and the row of controls under them. |
 | [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel: `PanelBody` and its one body slot, the back button, the shelf and the AirDrop tile. |
 | [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers, shared by both Interactions so the wording cannot drift. |
-| [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — per-block temperatures, throttle headroom, memory. |
+| [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — throttle headroom, memory, and whichever temperatures the chip is willing to name (M1 splits its die three ways; M2/M3 do not). |
+| [`NetworkReadout.swift`](../Vitals/Interactions/NetworkReadout.swift) | The link, same way: peek's two rates opened into what carries them — link rate, signal, band and channel, and whether a VPN has it. Names the interface, never the network: the SSID costs a Location prompt. |
 | [`Shelf.swift`](../Vitals/Interactions/Shelf.swift) | The drop box and the AirDrop plumbing. |
 
 ### `Extensions/` — concurrent conditions

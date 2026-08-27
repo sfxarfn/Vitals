@@ -117,6 +117,7 @@ surface.
 | `PanelView.swift` | Provides the expanded panel, navigation, shelf, and AirDrop tile. |
 | `BatteryReadout.swift` | Shares battery wording and values across Peek and Panel. |
 | `ThermalReadout.swift` | Shares die summaries and detailed thermal readings. |
+| `NetworkReadout.swift` | The panel behind peek's two rates: link rate, signal, band and VPN. |
 | `Shelf.swift` | Owns dropped files and AirDrop handoff behavior. |
 
 ### `Vitals/Extensions/` — concurrent conditions

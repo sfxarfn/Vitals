@@ -58,6 +58,14 @@ which subsystem is talking before you read anything.
     Memory appears *here and only here*: it is a number you went looking for,
     with no threshold, no pill and no glow behind it, so it does not reopen the
     question of whether memory is worth watching. It is not.
+  - **Network Detail** — the link behind peek's two rates: the rate the radio
+    negotiated, how strong the signal is, which band and channel it sits on,
+    and whether a VPN is carrying it. Reached by clicking peek's network row,
+    the same way the other two readouts are reached. The rates alone say the
+    network is slow; these say whether that is the link, the signal, or nothing
+    to do with the radio at all. The network's *name* is deliberately absent —
+    reading the SSID costs the Location grant from macOS 14 on, and the panel
+    is not worth a permission prompt.
 
 ### Events
 

@@ -9,7 +9,9 @@ Xcode to install it.
 
 ### Requirements
 
-- A Mac with a built-in display notch
+- A Mac with a built-in display notch, or **Settings → Show on external
+  displays** turned on, which draws the notch on whichever display the
+  pointer is on and gives a display without a camera housing one of its own
 - macOS 26 or later
 - A copy of `Vitals.app` that already runs on the original Mac/ included in this same directory
 

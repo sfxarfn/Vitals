@@ -5,11 +5,11 @@ import SwiftUI
 /// Each readout is reached from the thing in peek that summarises it — the
 /// battery line, the left flank's degree — so the panel is always the second
 /// half of a glance you already took.
-enum PanelBody { case shelf, battery, thermal }
+enum PanelBody { case shelf, battery, thermal, network }
 
 /// The panel: peek opened downward into a surface you can work in. One body
-/// slot, three things that can sit in it — the shelf, the battery numbers, or
-/// the die behind peek's one rounded degree.
+/// slot, four things that can sit in it — the shelf, the battery numbers, the
+/// die behind peek's one rounded degree, or the link behind its two rates.
 extension NotchView {
 
     // MARK: Body
@@ -21,7 +21,7 @@ extension NotchView {
             Color.clear.frame(height: metrics.notch.height)
                 .overlay(alignment: .leading) { backButton.padding(.leading, 14) }
                 .overlay(alignment: .trailing) { settingsButton().padding(.trailing, 14) }
-            // One slot, three contents — what put you here swaps the row, never
+            // One slot, four contents — what put you here swaps the row, never
             // the panel's geometry.
             Group {
                 switch panelBody {
@@ -32,12 +32,23 @@ extension NotchView {
                     }
                 case .battery: batteryPanel
                 case .thermal: thermalPanel
+                case .network: networkPanel
                 }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
             .animation(.snappy(duration: 0.2), value: panelBody)
         }
+        // Aiming a file at a 14pt-inset box is darts. The whole open panel
+        // takes a drop — the housing row, the padding, and the readout rows the
+        // drag has no way to know are up. The AirDrop tile
+        // and the box only override what happens inside their own bounds.
+        .contentShape(Rectangle())
+        .dropDestination(for: URL.self) { urls, _ in
+            shelf.add(urls)
+            panelBody = .shelf
+            return true
+        } isTargeted: { shelfTargeted = $0 }
     }
 
     // MARK: Controls
@@ -61,20 +72,23 @@ extension NotchView {
 
     private func settingsButton(size: CGFloat = 12) -> some View {
         HStack(spacing: size * 0.4) {
-            // Charge reads off how full the glyph is, not a number — the pill
-            // already carries the percentage when it is worth interrupting for.
-            // Pressing it swaps the panel's row over to the numbers.
-            Button { panelBody = panelBody == .battery ? .shelf : .battery } label: {
-                Image(systemName: telemetry.power.isCharging
-                      ? "battery.100percent.bolt"
-                      : "battery.\(batteryStep)percent")
-                    .font(.system(size: size, weight: .medium))
-                    .foregroundStyle(.white.opacity(panelBody == .battery || batteryHovered ? 0.9 : 0.45))
+            // Emptying the box is the only thing the shelf needs a button for —
+            // the battery and the die are both reached from the peek line that
+            // summarises them, so a second way in bought nothing. Present only
+            // while there is something to clear, so the flank is not a dead
+            // glyph on an empty tray.
+            if panelBody == .shelf, !shelf.urls.isEmpty {
+                Button { shelf.clear() } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: size, weight: .medium))
+                        .foregroundStyle(.white.opacity(clearHovered ? 0.9 : 0.45))
+                }
+                .buttonStyle(.plain)
+                .pointerStyle(.link)
+                .onHover { clearHovered = $0 }
+                .animation(.snappy(duration: 0.15), value: clearHovered)
+                .transition(.opacity)
             }
-            .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { batteryHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: batteryHovered)
             SettingsLink {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: size, weight: .medium))

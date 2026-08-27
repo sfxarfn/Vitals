@@ -1,4 +1,5 @@
 import Foundation
+import CoreWLAN
 import IOKit
 import IOKit.ps
 import Darwin
@@ -16,6 +17,8 @@ struct PowerSample {
     var adapterWatts: Double?         // what the brick is rated for
     var adapterContractWatts: Double? // what the port actually agreed to deliver
     var batteryWatts: Double = 0   // signed: + charging, - draining
+    var healthPercent: Int?        // charge the pack still holds, against its design capacity
+    var cycleCount: Int?
 
     /// What the machine itself is burning: wall input minus what reaches the cells.
     var systemWatts: Double? {
@@ -36,31 +39,78 @@ struct StallSample {
     var dieGroups: [SensorGroup: Double] = [:]
 }
 
-/// Bytes per second through the machine's interfaces, each direction.
+/// The half of RAM that cannot simply be handed back: pinned by the kernel, or
+/// squeezed to make room. Fractions of physical memory, 0–1 each.
+///
+/// Split rather than summed because the two mean different things — wired is a
+/// fixed cost the machine was born with, compressed is macOS actively working to
+/// find room, and only the second one rising is news.
+struct MemorySample {
+    var wired: Double = 0
+    var compressed: Double = 0
+
+    /// Both halves together: how much of the machine's RAM is spoken for.
+    var used: Double { min(wired + compressed, 1) }
+}
+
+/// Bytes per second through the machine's interfaces, each direction, plus what
+/// the Wi-Fi radio will say about the link carrying them.
+///
+/// The radio half is all optional and all separately so: a machine on Ethernet
+/// has no radio to ask, a radio that is off answers nothing, and one that is on
+/// but unassociated answers some of it. Every one of those is a dash, not a
+/// zero — 0 dBm is a plausible-looking signal and -100 is a real one.
 struct NetSample {
     var up: Double = 0
     var down: Double = 0
     /// A tunnel interface is up with an address on it.
     var vpn = false
+
+    /// True when there is a Wi-Fi radio at all, which is what separates
+    /// "Ethernet" from "Wi-Fi, not associated".
+    var hasWiFi = false
+    var linkMbps: Double?
+    var rssi: Int?
+    var band: String?
+    var channel: Int?
 }
 
-/// Which block of the die a temperature sensor sits on, read off the service's
-/// `Product` string. Only the three the panel names have a case; everything else
-/// — SOC, ANE, NAND, the gas gauge — is `other`. It still counts toward `tempC`,
-/// the governor reacts to whichever sensor is hottest regardless of block.
+/// Which part of the machine a temperature sensor sits on, read off the
+/// service's `Product` string. What is nameable depends on the chip, and the
+/// panel prints whichever set answered:
 ///
-/// ponytail: prefix match on observed strings (`pACC MTR Temp Sensor0`). A
-/// machine that names them differently drops every sensor into `other`, and the
-/// panel prints "—" on those three rows rather than lying — dump `Product` for
-/// each service and add the prefix if that happens.
+/// - M1 names its blocks: `pACC MTR Temp Sensor0`, `eACC …`, `GPU …`.
+/// - M2/M3 do not. The whole die arrives as `PMU tdie1…8` / `PMU2 tdev1…8` —
+///   sixteen unlabelled dies with no published mapping onto P, E or GPU. They
+///   are `die`, collectively, because inventing that mapping is the one thing
+///   worse than not having it.
+///
+/// `storage` and `battery` are named on both, and neither counts toward `tempC`
+/// — a warm pack is not the die getting hot, and `tempC` is what every pill and
+/// glow reads. `other` still does: SOC and ANE are die, just unnamed.
+///
+/// ponytail: prefix match on observed strings. A machine naming them some third
+/// way drops everything into `other` and the panel prints "—" rather than lying
+/// — the `#if DEBUG` dump in `TemperatureSensors.init` prints every `Product`,
+/// so add the prefix from that.
 enum SensorGroup: Hashable {
-    case pCore, eCore, gpu, other
+    case pCore, eCore, gpu, die, storage, battery, calibration, other
+
+    /// True for the groups that are the die heating up, which is what `tempC`
+    /// means and what the notch's edge reacts to. The pack, the flash and the
+    /// calibration reference are none of those.
+    var isDie: Bool { self != .storage && self != .battery && self != .calibration }
 
     init(product: String) {
-        if product.hasPrefix("pACC")      { self = .pCore }
-        else if product.hasPrefix("eACC") { self = .eCore }
-        else if product.hasPrefix("GPU")  { self = .gpu }
-        else                              { self = .other }
+        if product.hasPrefix("pACC")           { self = .pCore }
+        else if product.hasPrefix("eACC")      { self = .eCore }
+        else if product.hasPrefix("GPU")       { self = .gpu }
+        else if product.hasPrefix("NAND")      { self = .storage }
+        else if product.hasPrefix("gas gauge") { self = .battery }
+        // `tcal` is the calibration reference, not a place on the die.
+        else if product.hasSuffix("tcal")  { self = .calibration }
+        else if product.hasPrefix("PMU")   { self = .die }
+        else                                   { self = .other }
     }
 }
 
@@ -123,6 +173,18 @@ private final class TemperatureSensors {
                 .takeRetainedValue() as? String ?? ""
             return (group: SensorGroup(product: product), service: svc)
         }
+
+        #if DEBUG
+        // Every row of the thermal panel but the summary reads "—" when the
+        // `Product` prefixes miss, and the strings differ per chip generation.
+        // Dump them once so the miss is readable instead of guessed at.
+        print("[Vitals] temperature sensors, \(services.count):")
+        for svc in found {
+            let product = copyProperty?(svc, "Product" as CFString)?
+                .takeRetainedValue() as? String ?? "<no Product property>"
+            print("[Vitals]   \(product) -> \(SensorGroup(product: product))")
+        }
+        #endif
     }
 
     /// Hottest sensor per block, °C. Empty if nothing answered this tick.
@@ -157,16 +219,17 @@ final class Telemetry {
     /// nothing decides a threshold from it — but it is the only source that says
     /// the machine *is* trading clocks away, as opposed to being close to it.
     private(set) var thermalState = ProcessInfo.processInfo.thermalState
-    /// Fraction of RAM under pressure, 0–1. Nil if the host refuses the stats.
+    /// RAM under pressure, split into its two halves. Nil if the host refuses
+    /// the stats.
     ///
     /// Read only by the thermal panel, never by a `Signal` — `.ai/README.md` says
     /// memory is not a thing this app watches, and this does not make it one:
-    /// there is no threshold, no pill and no glow behind it, just a number in a
-    /// surface you had to click twice to reach.
-    private(set) var memoryUsed: Double?
+    /// the panel tints the total, but nothing anywhere decides anything from it,
+    /// and there is still no threshold, no pill and no glow behind it.
+    private(set) var memory: MemorySample?
     /// Throughput, both directions. Read only by peek, never by a `Signal` — same
-    /// standing as `memoryUsed`: no threshold, no pill, no glow, just a number in
-    /// a surface you had to hover for.
+    /// standing as `memory`: no threshold, no pill, no glow, just a number in a
+    /// surface you had to hover for.
     private(set) var net = NetSample()
 
     /// Seconds of continuous CPU load above the sustained threshold.
@@ -283,7 +346,32 @@ final class Telemetry {
             }
         }
 
+        if let (health, cycles) = Self.batteryHealth() {
+            s.healthPercent = health
+            s.cycleCount = cycles
+        }
+
         power = s
+    }
+
+    /// Pack health as a percentage of its design capacity, plus the cycle count
+    /// behind it. `NominalChargeCapacity` is the figure System Settings shows;
+    /// `AppleRawMaxCapacity` is the older key and drifts from it on Apple
+    /// silicon, so it is only the fallback — a machine publishing neither gets
+    /// no row rather than a wrong one.
+    private static func batteryHealth() -> (Int, Int)? {
+        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard svc != 0 else { return nil }
+        defer { IOObjectRelease(svc) }
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let p = props?.takeRetainedValue() as? [String: Any],
+              let design = (p["DesignCapacity"] as? NSNumber)?.doubleValue, design > 0,
+              let now = (p["NominalChargeCapacity"] as? NSNumber
+                         ?? p["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue, now > 0
+        else { return nil }
+        let cycles = (p["CycleCount"] as? NSNumber)?.intValue ?? 0
+        return (Int((now / design * 100).rounded()), cycles)
     }
 
     /// Watts of the USB-C contract actually in force, which the brick's rating
@@ -342,10 +430,10 @@ final class Telemetry {
         // every sensor happened to decline — same reason `samplePower` holds.
         let groups = Self.temperature?.read() ?? [:]
         s.dieGroups = groups.isEmpty ? stall.dieGroups : groups
-        s.tempC = groups.values.max() ?? stall.tempC
+        s.tempC = groups.filter { $0.key.isDie }.values.max() ?? stall.tempC
         stall = s
         thermalState = ProcessInfo.processInfo.thermalState
-        memoryUsed = Self.memoryUsedFraction() ?? memoryUsed
+        memory = Self.memorySample() ?? memory
 
         cpuHistory.append(s.cpuPercent)
         if cpuHistory.count > Self.historyLength { cpuHistory.removeFirst(cpuHistory.count - Self.historyLength) }
@@ -388,6 +476,7 @@ final class Telemetry {
     /// Rate is the delta between two reads, so the first one after launch only
     /// primes the counters — there is nothing to subtract from yet.
     private func sampleNet() {
+        sampleWiFi()
         guard let scan = Self.scanInterfaces() else { return }
         let totals = (up: scan.up, down: scan.down)
         let now = Date()
@@ -407,6 +496,39 @@ final class Telemetry {
         let ceiling = 12.5e9  // 100 Gbit/s: past any port this machine has
         net.up = up < ceiling ? up : 0
         net.down = down < ceiling ? down : 0
+    }
+
+    /// What the Wi-Fi radio says about the link. CoreWLAN answers all of this
+    /// without the Location grant — only the SSID is gated behind it, which is
+    /// the whole reason the panel names the interface rather than the network.
+    ///
+    /// Called from `sampleNet` so the throughput and the link it runs over are
+    /// always the same tick old.
+    private func sampleWiFi() {
+        guard let iface = CWWiFiClient.shared().interface() else {
+            net.hasWiFi = false
+            return
+        }
+        net.hasWiFi = true
+        // An unassociated or powered-down radio reports 0 for both, and 0 is a
+        // legal-looking value for neither — a link does not run at 0 Mbps and a
+        // station does not sit at 0 dBm.
+        let rate = iface.transmitRate()
+        net.linkMbps = rate > 0 ? rate : nil
+        let rssi = iface.rssiValue()
+        net.rssi = rssi < 0 ? rssi : nil
+        let channel = iface.wlanChannel()
+        net.channel = channel?.channelNumber
+        net.band = channel.map {
+            switch $0.channelBand {
+            case .band2GHz: "2.4 GHz"
+            case .band5GHz: "5 GHz"
+            case .band6GHz: "6 GHz"
+            // A band this SDK has no name for is still a real channel, and the
+            // number beside it is the half worth printing.
+            default: "—"
+            }
+        }
     }
 
     /// Bytes in and out summed over every non-loopback interface, and whether any
@@ -461,7 +583,7 @@ final class Telemetry {
     /// `kern.memorystatus_vm_pressure_level` is the other candidate and is worse
     /// for a readout: three steps, and it sits on "normal" through everything
     /// short of a swap storm.
-    private static func memoryUsedFraction() -> Double? {
+    private static func memorySample() -> MemorySample? {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size
                                            / MemoryLayout<integer_t>.size)
@@ -474,8 +596,9 @@ final class Telemetry {
         let total = Double(ProcessInfo.processInfo.physicalMemory)
         guard total > 0 else { return nil }
         let page = Double(vm_kernel_page_size)
-        let held = (Double(stats.wire_count) + Double(stats.compressor_page_count)) * page
-        return min(held / total, 1)
+        return MemorySample(
+            wired: min(Double(stats.wire_count) * page / total, 1),
+            compressed: min(Double(stats.compressor_page_count) * page / total, 1))
     }
 }
 
@@ -484,13 +607,24 @@ final class Telemetry {
 #if DEBUG
 enum TelemetrySelfCheck {
     static func run() {
-        // The sensor names are the whole basis for the panel's three rows, and
-        // they are a prefix match on a private string — the one thing here that
-        // silently goes wrong if macOS renames a block.
+        // The sensor names are the whole basis for the panel's rows, and they
+        // are a prefix match on a private string — the one thing here that
+        // silently goes wrong if macOS renames a block. It already has once:
+        // M1's three named blocks are gone on M2 and M3.
         assert(SensorGroup(product: "pACC MTR Temp Sensor3") == .pCore)
         assert(SensorGroup(product: "eACC MTR Temp Sensor0") == .eCore)
         assert(SensorGroup(product: "GPU MTR Temp Sensor1") == .gpu)
         assert(SensorGroup(product: "SOC MTR Temp Sensor0") == .other)
+        // M2/M3's unlabelled tree, plus the two parts every chip does name.
+        assert(SensorGroup(product: "PMU tdie4") == .die)
+        assert(SensorGroup(product: "PMU2 tdev1") == .die)
+        assert(SensorGroup(product: "PMU tcal") == .calibration)
+        assert(!SensorGroup.calibration.isDie)
+        assert(SensorGroup(product: "NAND CH0 temp") == .storage)
+        assert(SensorGroup(product: "gas gauge battery") == .battery)
+        // Only the die is the die: a warm pack must not raise `tempC`.
+        assert(!SensorGroup.battery.isDie && !SensorGroup.storage.isDie)
+        assert(SensorGroup.die.isDie && SensorGroup.other.isDie)
         // Unnamed is not a crash and not a fourth meaning: it lands in `other`,
         // where it still counts toward the hottest reading.
         assert(SensorGroup(product: "") == .other)

@@ -129,14 +129,53 @@ final class NotchController {
 
     // MARK: Window
 
+    /// Off, the notch is the built-in display's, and nowhere else. On, it
+    /// follows the pointer's display and a screen with no camera housing gets
+    /// one drawn for it. Settings writes this; the controller reads it.
+    static var externalDisplay: Bool {
+        get { UserDefaults.standard.bool(forKey: "externalDisplay") }
+        set { UserDefaults.standard.set(newValue, forKey: "externalDisplay") }
+    }
+
+    func setExternalDisplay(_ on: Bool) {
+        Self.externalDisplay = on
+        rebuildWindow()
+    }
+
+    /// What a screen without a housing pretends to have. Nothing sits behind it,
+    /// so it only has to read as a notch — this is roughly a 14-inch one.
+    private static let syntheticNotchWidth: CGFloat = 180
+
     /// The notch lives between the two auxiliary menu bar areas. No auxiliary
-    /// areas means no notch, and v1 is built-in display only.
-    private static func notchScreen() -> (NSScreen, CGRect)? {
-        for s in NSScreen.screens {
-            guard let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea else { continue }
+    /// areas means no housing, and an external display only gets a synthetic one
+    /// when the setting says so.
+    private static func notchRect(of s: NSScreen) -> CGRect? {
+        if let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea {
             let rect = CGRect(x: l.maxX, y: s.frame.maxY - l.height,
                               width: r.minX - l.maxX, height: l.height)
-            if rect.width > 1 { return (s, rect) }
+            if rect.width > 1 { return rect }
+        }
+        guard externalDisplay else { return nil }
+        // There are no auxiliary areas to measure here, so the menu bar's own
+        // height is what keeps the shape flush with it. `visibleFrame` is the
+        // only per-screen source for it, and it can come back equal to `frame`
+        // on a screen the menu bar is currently hidden on — hence the floor.
+        let height = max(s.frame.maxY - s.visibleFrame.maxY, 24)
+        return CGRect(x: s.frame.midX - syntheticNotchWidth / 2,
+                      y: s.frame.maxY - height,
+                      width: syntheticNotchWidth, height: height)
+    }
+
+    private static func notchScreen() -> (NSScreen, CGRect)? {
+        // The pointer's display wins while the setting is on: the notch belongs
+        // on the screen you are already looking at.
+        if externalDisplay {
+            let p = NSEvent.mouseLocation
+            if let s = NSScreen.screens.first(where: { $0.frame.contains(p) }),
+               let rect = notchRect(of: s) { return (s, rect) }
+        }
+        for s in NSScreen.screens {
+            if let rect = notchRect(of: s) { return (s, rect) }
         }
         return nil
     }
@@ -147,32 +186,59 @@ final class NotchController {
             return
         }
         self.screen = screen
-        metrics = NotchMetrics(notch: notch.size)
+        metrics = NotchMetrics(notch: notch.size,
+                               synthetic: screen.auxiliaryTopLeftArea == nil)
 
-        let size = metrics.windowSize
-        let frame = CGRect(x: notch.midX - size.width / 2,
-                           y: screen.frame.maxY - size.height,
-                           width: size.width, height: size.height)
-
+        let isNew = window == nil
         let panel = window ?? makePanel()
-        panel.setFrame(frame, display: true)
-        panel.contentView = NSHostingView(rootView: NotchRoot(controller: self))
+        // The hosting view survives a move between displays — rebuilding it
+        // would restart every animation the notch is in the middle of.
+        if isNew { panel.contentView = NSHostingView(rootView: NotchRoot(controller: self)) }
+        place(panel, screen: screen, notch: notch, display: true)
         panel.orderFrontRegardless()
         window = panel
 
         // The window must exist and be ordered in before it has a windowNumber.
         // Its own private space is what actually pins it during a space swipe;
         // collectionBehavior alone cannot do this.
-        space.windows = [panel]
+        //
+        // The space belongs to the display it was created on and cannot follow
+        // the panel to another one — a window parked in it draws nowhere else,
+        // which is exactly the "moved, but invisible" failure. On a synthetic
+        // notch the panel gives the space up and leans on `.canJoinAllSpaces`
+        // plus `repin` instead: swipe-proofing is the thing that gets traded.
+        space.windows = screen.auxiliaryTopLeftArea != nil ? [panel] : []
+
+        #if DEBUG
+        NSLog("Vitals notch → screen %@ notch %@ frame %@ space %@",
+              screen.localizedName, NSStringFromRect(notch),
+              NSStringFromRect(panel.frame), space.windows.isEmpty ? "no" : "yes")
+        #endif
+    }
+
+    private func place(_ panel: NSPanel, screen: NSScreen, notch: CGRect, display: Bool) {
+        let size = metrics.windowSize
+        panel.setFrame(CGRect(x: notch.midX - size.width / 2,
+                              y: screen.frame.maxY - size.height,
+                              width: size.width, height: size.height), display: display)
     }
 
     private func repin() {
         guard let window, let (screen, notch) = Self.notchScreen() else { return }
-        let size = metrics.windowSize
-        window.setFrame(CGRect(x: notch.midX - size.width / 2,
-                               y: screen.frame.maxY - size.height,
-                               width: size.width, height: size.height), display: false)
+        place(window, screen: screen, notch: notch, display: false)
+        self.screen = screen
         window.orderFrontRegardless()
+    }
+
+    /// The pointer crossing to another display takes the notch with it, but only
+    /// from rest: pulling the shape out from under a hover, or off a screen an
+    /// Event is still being read on, is hostile.
+    private func followPointer() {
+        guard Self.externalDisplay, window != nil, atRest else { return }
+        let p = NSEvent.mouseLocation
+        guard let s = NSScreen.screens.first(where: { $0.frame.contains(p) }),
+              s != screen else { return }
+        rebuildWindow()
     }
 
     private func makePanel() -> NSPanel {
@@ -568,6 +634,7 @@ final class NotchController {
     }
 
     private func mouseMoved() {
+        followPointer()
         guard let screen, let notch = notchRect else { return }
         let p = NSEvent.mouseLocation
 
@@ -598,7 +665,10 @@ final class NotchController {
         dwell = Timer.scheduledTimer(withTimeInterval: Self.dwellDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, notch.contains(NSEvent.mouseLocation), self.atRest else { return }
-                self.grow(.peek)
+                // A loaded shelf is why you came back: peek would only make you
+                // press the tray button to see what you already know is in there.
+                // Empty, there is nothing to open onto and peek is the floor.
+                self.grow(self.shelf.urls.isEmpty ? .peek : .panel)
             }
         }
     }

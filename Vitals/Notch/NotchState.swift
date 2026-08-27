@@ -65,6 +65,10 @@ typealias Flanks = (left: CGFloat, right: CGFloat)
 struct NotchMetrics {
     /// Physical notch, measured from the screen's auxiliary areas.
     var notch: CGSize
+    /// True when there is no camera housing and the notch was drawn for a
+    /// display that has none. Only the corner radii care: they are calibrated
+    /// against a real housing's height and a menu-bar-tall one is shorter.
+    var synthetic = false
     // Every flank below is its content's measured width plus `notchPad`, at the
     // point sizes that state actually draws at. Grow the number if the string or
     // the glyph that sets the ceiling changes.

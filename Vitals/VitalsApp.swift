@@ -33,9 +33,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct SettingsView: View {
+    /// Two panes, in the order the notch is built: what it does, then what it
+    /// can be made to draw. Anything that is not a preview belongs in General.
+    private enum Pane: String, CaseIterable, Identifiable {
+        case general = "General"
+        case preview = "Preview"
+
+        var id: Self { self }
+        var symbol: String {
+            switch self {
+            case .general: "gearshape"
+            case .preview: "eye"
+            }
+        }
+    }
+
+    @State private var pane: Pane = .general
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage("externalDisplay") private var externalDisplay = false
 
     var body: some View {
+        NavigationSplitView {
+            List(Pane.allCases, selection: $pane) { item in
+                Label(item.rawValue, systemImage: item.symbol)
+            }
+            .navigationSplitViewColumnWidth(min: 160, ideal: 176, max: 200)
+        } detail: {
+            Group {
+                switch pane {
+                case .general: general
+                case .preview: preview
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(pane.rawValue)
+        }
+        // The Settings scene has no size of its own, and a split view with no
+        // frame collapses to its sidebar.
+        .frame(width: 660, height: 440)
+    }
+
+    // MARK: General
+
+    @ViewBuilder private var general: some View {
         Form {
             Section("General") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
@@ -43,21 +83,35 @@ struct SettingsView: View {
                         try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
+                Toggle("Show on external displays", isOn: $externalDisplay)
+                    .onChange(of: externalDisplay) { _, on in
+                        NotchController.shared?.setExternalDisplay(on)
+                    }
+                Text("The notch follows the pointer between displays. A display without a camera housing gets one drawn at the top of its menu bar.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Xcode") { buildAccess }
+        }
+    }
+
+    // MARK: Preview
+
+    @ViewBuilder private var preview: some View {
+        Form {
             // One section per subsystem, in the order `product.md` lists them.
             // Two buttons on opposite sides fire together, which is the only way
             // to see a sided pair without waiting for the machine to produce one.
             ForEach(NotchController.previews, id: \.group) { group in
-                Section("Preview · \(group.group)") {
-                    ForEach(group.previews, id: \.label) { preview in
-                        Button(preview.label) {
-                            NotchController.shared?.preview(preview.state)
+                Section(group.group) {
+                    ForEach(group.previews, id: \.label) { item in
+                        Button(item.label) {
+                            NotchController.shared?.preview(item.state)
                         }
                     }
                 }
             }
-            Section("Preview · Extensions") {
+            Section("Extensions") {
                 Button("Claude in progress") {
                     NotchController.shared?.previewExtension("claude")
                 }
@@ -69,8 +123,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 320)
     }
 
     /// The grant is the only opt-in progress has, and the only thing here that

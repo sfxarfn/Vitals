@@ -44,7 +44,18 @@ extension NotchView {
     /// the power was going, which is the half a hover is asking for.
     private var peekRow: some View {
         HStack(spacing: 10) {
-            networkStatus
+            // Same move the battery line and the left flank make — the summary
+            // is the way into the numbers behind it.
+            Button {
+                panelBody = .network
+                show(.panel)
+            } label: {
+                networkStatus.opacity(networkHovered ? 1 : 0.85)
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { networkHovered = $0 }
+            .animation(.snappy(duration: 0.15), value: networkHovered)
             Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
                 .padding(.horizontal, 4)
             // The summary is also the way into the numbers behind it — the panel
@@ -142,10 +153,13 @@ extension NotchView {
         }
     }
 
+    /// Shared with the network panel, so peek's two lines and the panel behind
+    /// them cannot start rounding the same rate two different ways.
+    ///
     /// Bytes never sits below KB — a row that flips between "812 bytes/s" and
     /// "1.2 MB/s" changes width on every idle tick. Non-numeric formatting off for
     /// the same reason: the default zero is the word "Zero".
-    private static let rateFormatter: ByteCountFormatter = {
+    static let rateFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
         f.allowedUnits = [.useKB, .useMB, .useGB]
         f.countStyle = .file
