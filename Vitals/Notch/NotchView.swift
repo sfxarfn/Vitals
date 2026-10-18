@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// Pose for the peek/panel rubber. Identity at rest; the keyframe animator
+/// only leaves it when `rubberTick` changes.
+private struct RubberPose: Equatable, Animatable {
+    var x: CGFloat = 1
+    var y: CGFloat = 1
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { .init(x, y) }
+        set { x = newValue.first; y = newValue.second }
+    }
+}
+
 /// The shape itself: one black outline that grows and shrinks, whatever is
 /// inside it. What goes inside lives beside its category — `Events/`,
 /// `Activities/`, `Interactions/` — and is reached through `content` below;
@@ -13,6 +25,10 @@ struct NotchView: View {
     let cpuGlow: Signal?
     let thermalGlow: Signal?
     let shelf: Shelf
+    /// Approach cue from the controller. Nil unless a file drag is near the
+    /// housing and the panel has not taken the drop over yet.
+    let fileDrag: FileDrag?
+    let endFileDrag: () -> Void
     /// Sends via AirDrop, anchored on the panel's own NSView for the fallback
     /// share sheet — the controller owns the window, so it owns that call.
     let airDrop: ([URL]) -> Void
@@ -23,16 +39,28 @@ struct NotchView: View {
 
     // Extensions cannot add storage, so every piece of view state lives here and
     // is read from whichever category file draws it.
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+
     @State var shelfTargeted = false
     @State var airDropTargeted = false
-    @State var settingsHovered = false
-    @State var trayHovered = false
-    @State var backHovered = false
+    /// Bumped only when peek or the panel opens or collapses. The keyframe
+    /// animator stays at rest otherwise — it does not run while idle.
+    @State var rubberTick = 0
+    @State var rubberClosing = false
+    /// -1…1, where the drag sits across the open panel. Only written from a
+    /// drop session, so it is idle at rest.
+    @State var dragLean: CGFloat = 0
+    /// One squash after a drop lands, then back. Never left set.
+    @State var landSquash = false
+    /// Border flash for the landing, including when motion is reduced.
+    @State var landFlash = false
+    @State var liftingURL: URL?
+    @State var liftTilt: Double = 0
+    @State var liftSample: CGPoint?
+    @State var freshURLs: Set<URL> = []
+    @State var ripplePoint: CGPoint?
+    @State var rippleToken = 0
     @State var panelBody: PanelBody = .shelf
-    @State var batteryHovered = false
-    @State var clearHovered = false
-    @State var thermalHovered = false
-    @State var networkHovered = false
 
     var size: CGSize { metrics.size(for: state, extensions: extensions) }
     private var lifted: Bool {
@@ -180,16 +208,165 @@ struct NotchView: View {
                 // States that last twenty minutes must not announce themselves;
                 // fading is the whole difference between a glow and a pill.
                 .animation(.easeInOut(duration: 0.5), value: [thermalGlow, cpuGlow])
-                // Last, so it moves the shape, its shadows and its glows as one
-                // piece rather than shifting the box out from under them.
-                .offset(x: xOffset)
+                // Drag feedback sits on the drawn silhouette, not on a new
+                // layout size: the window and the hover rect stay where they
+                // are, and the outline leans toward the file in hand. Gone the
+                // moment the drag is — `reach` is 0 at rest, so none of this
+                // ticks while the notch is idle.
+                .overlay { shelfRim }
+                .background(alignment: .top) { shelfUnderglow }
+                .scaleEffect(x: silhouetteX, y: silhouetteY, anchor: .top)
+                .offset(x: xOffset + silhouetteNudge)
+                .animation(shelfFollow, value: fileDrag)
+                .animation(shelfFollow, value: shelfTargeted)
+                .animation(shelfFollow, value: airDropTargeted)
+                .animation(shelfFollow, value: dragLean)
+                // Rubber on the way in and the suck on the way out. Scale, not
+                // a second layout size: the frame above is still the bouncy
+                // growth, and this only flavours peek and the panel. Anchor is
+                // the top edge so the housing stays on the bezel. Reduce Motion
+                // never bumps `rubberTick`, so the pose stays 1 and the frame
+                // animation is the one this view has always used.
+                .keyframeAnimator(initialValue: RubberPose(), trigger: rubberTick) { view, pose in
+                    view.scaleEffect(x: pose.x, y: pose.y, anchor: .top)
+                } keyframes: { _ in
+                    // One track shape for both directions — the keyframe builder
+                    // needs a single type, and the values are what differ.
+                    // Close: a short stretch, then a dip just under rest, then
+                    // settle. Open: hold, then a small overshoot, then settle.
+                    KeyframeTrack(\.y) {
+                        CubicKeyframe(CGFloat(rubberClosing ? 1.03 : 1), duration: 0.08)
+                        CubicKeyframe(CGFloat(1), duration: rubberClosing ? 0.26 : 0.02)
+                        SpringKeyframe(CGFloat(rubberClosing ? 0.973 : 1.016),
+                                       duration: rubberClosing ? 0.12 : 0.3)
+                        SpringKeyframe(CGFloat(1), duration: rubberClosing ? 0.18 : 0.2)
+                    }
+                    KeyframeTrack(\.x) {
+                        CubicKeyframe(CGFloat(rubberClosing ? 0.99 : 1), duration: 0.08)
+                        CubicKeyframe(CGFloat(1), duration: rubberClosing ? 0.26 : 0.02)
+                        SpringKeyframe(CGFloat(1.008), duration: rubberClosing ? 0.12 : 0.3)
+                        SpringKeyframe(CGFloat(1), duration: rubberClosing ? 0.18 : 0.2)
+                    }
+                }
             Spacer(minLength: 0)
         }
         .frame(width: metrics.windowSize.width, height: metrics.windowSize.height, alignment: .top)
         .animation(.bouncy(duration: 0.45, extraBounce: 0.12), value: growthKey)
         // The shelf is what the panel is for; a readout left up from the last
         // hover would greet the next drag with the wrong one.
-        .onChange(of: state) { if state == .idle { panelBody = .shelf } }
+        .onChange(of: state) { old, new in
+            if new == .idle { panelBody = .shelf }
+            // A targeted flag left over from a drag the panel closed under
+            // would keep the resting notch swollen.
+            if new != .panel {
+                shelfTargeted = false
+                airDropTargeted = false
+                dragLean = 0
+                landSquash = false
+                liftingURL = nil
+                liftTilt = 0
+            }
+            if new != .peek && new != .panel { VitalsCursor.forceArrow() }
+            guard !reduceMotion, old != new else { return }
+            let was = old == .peek || old == .panel
+            let now = new == .peek || new == .panel
+            guard was || now else { return }
+            // Panel back to peek is the same suck, just not all the way to idle.
+            rubberClosing = was && (!now || new == .peek)
+            rubberTick += 1
+        }
+    }
+
+    // MARK: Shelf gesture
+
+    /// How far the silhouette is reaching. Pinned while the landing squash
+    /// plays, so clearing the drag cue in the same turn does not collapse it
+    /// out from under the jelly.
+    var reach: CGFloat {
+        if landSquash { return 1 }
+        if shelfTargeted || airDropTargeted { return 1 }
+        return fileDrag?.pull ?? 0
+    }
+
+    var lean: CGFloat {
+        guard !reduceMotion else { return 0 }
+        if shelfTargeted || airDropTargeted || landSquash { return dragLean }
+        return (fileDrag?.lean ?? 0) * (fileDrag?.pull ?? 0)
+    }
+
+    var silhouetteX: CGFloat {
+        guard !reduceMotion else { return 1 }
+        let awake = 1 + reach * 0.03 + abs(lean) * reach * 0.015
+        return landSquash ? awake * 1.06 : awake
+    }
+
+    var silhouetteY: CGFloat {
+        guard !reduceMotion else { return 1 }
+        let awake = 1 + reach * 0.055
+        return landSquash ? awake * 0.92 : awake
+    }
+
+    /// A few points toward the file. Anchored at the top edge, so the housing
+    /// stays on the bezel and the bottom is what moves.
+    var silhouetteNudge: CGFloat {
+        guard !reduceMotion else { return 0 }
+        return lean * reach * 9
+    }
+
+    var rimOpacity: Double {
+        if reduceMotion {
+            return (shelfTargeted || airDropTargeted || landFlash) ? 0.35 : 0
+        }
+        if landSquash || landFlash { return 0.85 }
+        return Double(reach) * 0.65
+    }
+
+    private var shelfAccent: Color { Color(red: 0.62, green: 0.86, blue: 1) }
+
+    var shelfFollow: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.22, dampingFraction: 0.72)
+    }
+
+    /// Insertion and the gap closing when a file leaves. Shorter, and with no
+    /// scale, when motion is reduced.
+    var shelfPop: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.4, dampingFraction: 0.62)
+    }
+
+    @ViewBuilder private var shelfRim: some View {
+        if rimOpacity > 0.01 {
+            shape.stroke(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(rimOpacity * 0.22),
+                        shelfAccent.opacity(rimOpacity),
+                        Color.white.opacity(rimOpacity * 0.9)
+                    ],
+                    startPoint: UnitPoint(x: 0.5 + lean * 0.25, y: 0),
+                    endPoint: .bottom
+                ),
+                lineWidth: 2
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Soft light under the bottom curve, only while a drag is reaching.
+    /// Behind the black fill, so the part inside the silhouette disappears and
+    /// what clears the edge reads as a rim. Not in the tree at rest.
+    @ViewBuilder private var shelfUnderglow: some View {
+        if !reduceMotion, rimOpacity > 0.04 {
+            Ellipse()
+                .fill(shelfAccent.opacity(rimOpacity * 0.5))
+                .frame(width: max(72, size.width * 0.58), height: 18)
+                .blur(radius: 12)
+                .offset(y: size.height - 8)
+                .allowsHitTesting(false)
+        }
     }
 
     // MARK: Content
@@ -230,10 +407,27 @@ struct NotchView: View {
 
         // Interactions.
         case .peek:
-            peekContent.transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.06)))
+            peekContent.transition(interactionTransition(reduceDuration: 0.2))
         case .panel:
-            panelContent.transition(.opacity.animation(.easeOut(duration: 0.28).delay(0.06)))
+            panelContent.transition(interactionTransition(reduceDuration: 0.28))
         }
+    }
+
+    /// Content leaves before the outline finishes collapsing, or the suck
+    /// clips it. On the way in it waits, slightly small, until the shape has
+    /// room. Reduce Motion keeps the fade the outline has always used.
+    private func interactionTransition(reduceDuration: Double) -> AnyTransition {
+        if reduceMotion {
+            return .opacity.animation(.easeOut(duration: reduceDuration).delay(0.06))
+        }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.92, anchor: .top))
+                .animation(.spring(response: 0.34, dampingFraction: 0.84).delay(0.1)),
+            removal: .opacity
+                .combined(with: .scale(scale: 0.86, anchor: .top))
+                .animation(.easeOut(duration: 0.1))
+        )
     }
 
     // MARK: Glow

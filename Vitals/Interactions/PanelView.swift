@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What sits in the panel's one body slot. The panel's geometry never changes
 /// with it: the row swaps what it holds, the shape stays the one peek grew into.
@@ -41,14 +42,27 @@ extension NotchView {
         }
         // Aiming a file at a 14pt-inset box is darts. The whole open panel
         // takes a drop — the housing row, the padding, and the readout rows the
-        // drag has no way to know are up. The AirDrop tile
-        // and the box only override what happens inside their own bounds.
+        // drag has no way to know are up. The AirDrop tile overrides what
+        // happens inside its own bounds. The delegate, not `dropDestination`,
+        // because the silhouette has to follow the pointer the whole way in.
         .contentShape(Rectangle())
-        .dropDestination(for: URL.self) { urls, _ in
-            shelf.add(urls)
-            panelBody = .shelf
-            return true
-        } isTargeted: { shelfTargeted = $0 }
+        .onDrop(of: [.fileURL], delegate: ShelfFileDrop(
+            onMove: { point in
+                if !shelfTargeted { shelfTargeted = true }
+                followDrag(point)
+            },
+            onExit: { releaseDragAim() },
+            onPerform: { urls, point in catchOnShelf(urls, at: point) }
+        ))
+        .overlay {
+            if let ripplePoint, !reduceMotion {
+                ShelfRipple(point: ripplePoint, token: rippleToken) { finished in
+                    if rippleToken == finished { ripplePoint = nil }
+                }
+                .id(rippleToken)
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: Controls
@@ -62,12 +76,10 @@ extension NotchView {
                 Text("Back")
             }
             .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(backHovered ? 0.9 : 0.45))
+            .foregroundStyle(.white.opacity(0.55))
         }
         .buttonStyle(.plain)
-        .pointerStyle(.link)
-        .onHover { backHovered = $0 }
-        .animation(.snappy(duration: 0.15), value: backHovered)
+        .vitalsPressable()
     }
 
     private func settingsButton(size: CGFloat = 12) -> some View {
@@ -81,23 +93,19 @@ extension NotchView {
                 Button { shelf.clear() } label: {
                     Image(systemName: "trash")
                         .font(.system(size: size, weight: .medium))
-                        .foregroundStyle(.white.opacity(clearHovered ? 0.9 : 0.45))
+                        .foregroundStyle(.white.opacity(0.55))
                 }
                 .buttonStyle(.plain)
-                .pointerStyle(.link)
-                .onHover { clearHovered = $0 }
-                .animation(.snappy(duration: 0.15), value: clearHovered)
+                .vitalsPressable()
                 .transition(.opacity)
             }
             SettingsLink {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: size, weight: .medium))
-                    .foregroundStyle(.white.opacity(settingsHovered ? 0.9 : 0.45))
+                    .foregroundStyle(.white.opacity(0.55))
             }
             .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { settingsHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: settingsHovered)
+            .vitalsPressable()
         }
     }
 
@@ -118,16 +126,32 @@ extension NotchView {
             RoundedRectangle(cornerRadius: 14)
                 .fill(LinearGradient(colors: [.blue, .purple],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                .brightness(airDropTargeted ? 0.12 : 0)
+                .brightness(airDropTargeted ? 0.16 : 0)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(.white.opacity(airDropTargeted ? 0.75 : 0), lineWidth: 1.5)
+                .allowsHitTesting(false)
         }
         .contentShape(RoundedRectangle(cornerRadius: 14))
         .onTapGesture { airDrop(shelf.urls) }
-        .dropDestination(for: URL.self) { urls, _ in
-            airDrop(urls)
-            return true
-        } isTargeted: { airDropTargeted = $0 }
-        .scaleEffect(airDropTargeted ? 1.04 : 1)
-        .animation(.snappy(duration: 0.18), value: airDropTargeted)
+        .vitalsPressable()
+        .onDrop(of: [.fileURL], delegate: ShelfFileDrop(
+            onMove: { point in
+                if !airDropTargeted { airDropTargeted = true }
+                followDrag(point)
+            },
+            onExit: {
+                airDropTargeted = false
+                if !shelfTargeted {
+                    dragLean = 0
+                    endFileDrag()
+                }
+            },
+            onPerform: { urls, _ in catchAirDrop(urls) }
+        ))
+        .scaleEffect(reduceMotion ? 1 : (airDropTargeted ? 1.06 : 1))
+        .animation(shelfFollow, value: airDropTargeted)
     }
 
     private var shelfBox: some View {
@@ -136,68 +160,65 @@ extension NotchView {
                 if shelf.urls.isEmpty {
                     Text("Drop files here")
                         .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.white.opacity(shelfTargeted || landFlash ? 0.85 : 0.4))
+                        .scaleEffect(!reduceMotion && shelfTargeted ? 1.05 : 1)
                         .frame(maxWidth: .infinity)
                 } else {
-                    ForEach(shelf.urls, id: \.self, content: item)
+                    ForEach(Array(shelf.urls.enumerated()), id: \.element) { index, url in
+                        shelfChip(url, index: index)
+                    }
+                    // The slot the drop will actually fill — files append.
+                    // A gap drawn in the middle would promise an insertion the
+                    // box does not do. Hidden when motion is reduced: the
+                    // border is the affordance then, not a moving slot.
+                    if shelfTargeted, !reduceMotion {
+                        ShelfGhost()
+                            .transition(.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
+                    }
                 }
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .animation(shelfPop, value: shelf.urls)
+            .animation(shelfPop, value: shelfTargeted)
+            .animation(shelfPop, value: liftingURL)
         }
         .scrollIndicators(.never)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.white.opacity(landFlash ? 0.16 : shelfTargeted ? 0.11 : 0.06))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.white.opacity(shelfTargeted ? 0.55 : 0.2),
-                              style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                .strokeBorder(.white.opacity(landFlash ? 0.95 : shelfTargeted ? 0.75 : 0.2),
+                              style: StrokeStyle(lineWidth: shelfTargeted || landFlash ? 2 : 1.5,
+                                                 dash: shelfTargeted ? [] : [6, 4]))
+                .allowsHitTesting(false)
         }
-        // The scroll view is transparent, so without a shape of its own only
-        // the placeholder text and the item icons take a drop — the empty
-        // slack around them falls through.
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .dropDestination(for: URL.self) { urls, _ in
-            shelf.add(urls)
-            return true
-        } isTargeted: { shelfTargeted = $0 }
-        .animation(.snappy(duration: 0.18), value: shelfTargeted)
+        .animation(shelfFollow, value: shelfTargeted)
+        .animation(shelfFollow, value: landFlash)
         .contextMenu {
             Button("Clear shelf") { shelf.clear() }.disabled(shelf.urls.isEmpty)
         }
     }
 
-    private func item(_ url: URL) -> some View {
-        VStack(spacing: 4) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable().frame(width: 30, height: 30)
-            Text(url.lastPathComponent)
-                .font(.system(size: 9, design: .rounded))
-                .foregroundStyle(.white.opacity(0.8))
-                .lineLimit(1).truncationMode(.middle)
-                .frame(width: 68)
-        }
-        // Dragging an item out is the way files leave the box, so the box lets
-        // go of it once the drag lands somewhere. Only the shelf entry goes —
-        // the drag itself is a copy, so the file stays wherever it came from.
-        .draggable(url)
-        .onDragSessionUpdated { session in
-            guard case .ended(let operation) = session.phase else { return }
-            // A drag that was called off, or refused by what it landed on, has
-            // to leave the shelf exactly as it found it.
-            switch operation {
-            case .cancel, .forbidden: break
-            // The callback is not declared on the main actor, but AppKit only
-            // ever ends a drag session there — same reason the controller's
-            // timers assume it.
-            default: MainActor.assumeIsolated { shelf.remove(url) }
-            }
-        }
-        .contextMenu {
-            Button("Remove") { shelf.remove(url) }
-            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-        }
+    private func shelfChip(_ url: URL, index: Int) -> some View {
+        let fresh = freshURLs.contains(url)
+        let lifted = liftingURL == url
+        let magnet = shelfTargeted && !lifted && !reduceMotion ? Double(dragLean) * 3.5 : 0
+        let freshBefore = shelf.urls.prefix(index).filter { freshURLs.contains($0) }.count
+        return ShelfChip(
+            url: url,
+            fresh: fresh,
+            reduceMotion: reduceMotion,
+            lifted: lifted,
+            tilt: lifted ? liftTilt : magnet,
+            delay: fresh ? Double(freshBefore) * 0.045 : 0,
+            onSession: { noteDrag(url, $0) },
+            onSettled: { freshURLs.remove(url) },
+            onRemove: { withAnimation(shelfPop) { shelf.remove(url) } },
+            onReveal: { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        )
     }
 }

@@ -20,12 +20,9 @@ extension NotchView {
                     show(.panel)
                 } label: {
                     readout("thermometer.medium", tempValue, tint: tempTint)
-                        .opacity(thermalHovered ? 1 : 0.85)
                 }
                 .buttonStyle(.plain)
-                .pointerStyle(.link)
-                .onHover { thermalHovered = $0 }
-                .animation(.snappy(duration: 0.15), value: thermalHovered)
+                .vitalsPressable()
                 // Outside the button, so the flank keeps the exact geometry it
                 // had before it became one — peek and the build share this width.
                 .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad)
@@ -50,12 +47,10 @@ extension NotchView {
                 panelBody = .network
                 show(.panel)
             } label: {
-                networkStatus.opacity(networkHovered ? 1 : 0.85)
+                networkStatus
             }
             .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { networkHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: networkHovered)
+            .vitalsPressable()
             Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
                 .padding(.horizontal, 4)
             // The summary is also the way into the numbers behind it — the panel
@@ -64,12 +59,10 @@ extension NotchView {
                 panelBody = .battery
                 show(.panel)
             } label: {
-                batteryStatus.opacity(batteryHovered ? 1 : 0.85)
+                batteryStatus
             }
             .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { batteryHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: batteryHovered)
+            .vitalsPressable()
             Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
                 .padding(.horizontal, 4)
             // Fills up when the shelf is holding something, so the hover says
@@ -82,21 +75,17 @@ extension NotchView {
             } label: {
                 Image(systemName: shelf.urls.isEmpty ? "tray" : "tray.full.fill")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.white.opacity(trayHovered ? 0.9 : 0.45))
+                    .foregroundStyle(.white.opacity(0.55))
             }
             .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { trayHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: trayHovered)
+            .vitalsPressable()
             SettingsLink {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.white.opacity(settingsHovered ? 0.9 : 0.45))
+                    .foregroundStyle(.white.opacity(0.55))
             }
             .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .onHover { settingsHovered = $0 }
-            .animation(.snappy(duration: 0.15), value: settingsHovered)
+            .vitalsPressable()
         }
     }
 

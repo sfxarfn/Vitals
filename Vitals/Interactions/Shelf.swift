@@ -16,8 +16,13 @@ import SwiftUI
 final class Shelf {
     private(set) var urls: [URL] = []
 
-    func add(_ dropped: [URL]) {
-        urls.append(contentsOf: dropped.filter { !urls.contains($0) })
+    /// The URLs that were not already in the box. Callers spring only those —
+    /// a second drop of the same file is not a new arrival.
+    @discardableResult
+    func add(_ dropped: [URL]) -> [URL] {
+        let fresh = dropped.filter { !urls.contains($0) }
+        urls.append(contentsOf: fresh)
+        return fresh
     }
 
     func remove(_ url: URL) { urls.removeAll { $0 == url } }

@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import Observation
 
+/// A file being dragged near the housing. `pull` is 0 at the edge of the
+/// reach and 1 on the notch; `lean` is -1…1 across that reach.
+struct FileDrag: Equatable {
+    var pull: CGFloat
+    var lean: CGFloat
+}
+
 @Observable
 @MainActor
 final class NotchController {
@@ -17,6 +24,16 @@ final class NotchController {
 
     let telemetry = Telemetry()
     let shelf = Shelf()
+    /// Where a file drag sits relative to the housing. Nil the moment the drag
+    /// leaves or ends — a leftover value would keep the silhouette animating
+    /// for the rest of the day.
+    private(set) var fileDrag: FileDrag?
+    /// A file drag is in hand, whether or not it is near the housing. The
+    /// pointing-hand tracking must not paint over the drag cursor. Cleared on
+    /// mouse-up, on drop, and when a shelf item's own drag ends.
+    private(set) var draggingFile = false
+    /// Resolved once per mouse-down, not per pixel.
+    private var dragIsFile: Bool?
 
     private var engine = EventEngine()
     private var window: NSPanel?
@@ -254,6 +271,10 @@ final class NotchController {
         panel.animationBehavior = .none
         panel.isFloatingPanel = true
         panel.level = .mainMenu + 3
+        // A nonactivating panel never becomes key, and cursor rects (what
+        // `pointerStyle` installs) are ignored until it does. Mouse-moved has
+        // to be requested or hover stays silent whenever Vitals is not front.
+        panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         return panel
     }
@@ -599,6 +620,55 @@ final class NotchController {
         AirDropper.shared.send(urls, from: window?.contentView)
     }
 
+    func endFileDrag() {
+        guard fileDrag != nil else { return }
+        fileDrag = nil
+    }
+
+    /// Shelf drops and an item dragged out of the shelf end on the view, which
+    /// cannot see a mouse-up once the pointer is over this window.
+    func setDraggingFile(_ on: Bool) {
+        if draggingFile != on { draggingFile = on }
+    }
+
+    /// A file drag inside the reach around the housing, before the panel is a
+    /// real drop target. The global monitor goes deaf once the pointer is over
+    /// the open panel, so this only covers the approach; SwiftUI's drop takes
+    /// the lean from there. Quantized so a moving pointer does not republish
+    /// every pixel — nothing here runs unless a drag is already in hand.
+    private func trackFileDrag() {
+        guard dragBaseline != -1,
+              dragPasteboard.changeCount != dragBaseline,
+              let screen, let notch = notchRect else {
+            endFileDrag()
+            return
+        }
+        let p = NSEvent.mouseLocation
+        let span = notch.width / 2 + 120
+        let near = abs(p.x - notch.midX) < span
+            && p.y < screen.frame.maxY + 4
+            && p.y > notch.minY - 110
+        guard near,
+              dragPasteboard.canReadObject(forClasses: [NSURL.self],
+                                           options: [.urlReadingFileURLsOnly: true]) else {
+            endFileDrag()
+            return
+        }
+        let lean = quant((p.x - notch.midX) / span)
+        let below = max(0, notch.minY - p.y)
+        let pull = quant(1 - min(1, below / 110))
+        guard pull > 0.02 else {
+            endFileDrag()
+            return
+        }
+        let next = FileDrag(pull: min(1, pull), lean: max(-1, min(1, lean)))
+        if next != fileDrag { fileDrag = next }
+    }
+
+    private func quant(_ value: CGFloat, _ steps: CGFloat = 20) -> CGFloat {
+        (value * steps).rounded() / steps
+    }
+
     /// A notch at rest cannot be a drag destination — the panel is
     /// mouse-transparent and notch-sized, so AppKit never offers it the drag.
     /// Watching the drag pasteboard is what lets the shelf open under the
@@ -626,9 +696,29 @@ final class NotchController {
 
     private func handle(_ event: NSEvent) {
         switch event.type {
-        case .leftMouseDown: dragBaseline = dragPasteboard.changeCount
-        case .leftMouseUp:   dragBaseline = -1
-        case .leftMouseDragged: lastDrag = .now; dragMoved(); mouseMoved()
+        case .leftMouseDown:
+            dragBaseline = dragPasteboard.changeCount
+            dragIsFile = nil
+            draggingFile = false
+            endFileDrag()
+        case .leftMouseUp:
+            dragBaseline = -1
+            dragIsFile = nil
+            draggingFile = false
+            endFileDrag()
+        case .leftMouseDragged:
+            lastDrag = .now
+            if dragIsFile == nil, dragBaseline != -1,
+               dragPasteboard.changeCount != dragBaseline {
+                dragIsFile = dragPasteboard.canReadObject(
+                    forClasses: [NSURL.self],
+                    options: [.urlReadingFileURLsOnly: true]
+                )
+            }
+            if dragIsFile == true { draggingFile = true }
+            trackFileDrag()
+            dragMoved()
+            mouseMoved()
         default: mouseMoved()
         }
     }
@@ -688,6 +778,11 @@ final class NotchController {
     /// Back to the floor: idle, or the Activity still running under it.
     func shrink() {
         dwell?.invalidate(); dwell = nil
+        // The control under the pointer is about to leave the hierarchy, and
+        // its tracking area does not always get mouseExited once this window
+        // stops taking events. Put the arrow back before that happens.
+        draggingFile = false
+        VitalsCursor.forceArrow()
         clearSided()
         state = resting
         telemetry.grown = false
@@ -707,6 +802,8 @@ private struct NotchRoot: View {
                   cpuGlow: controller.cpuGlow,
                   thermalGlow: controller.thermalGlow,
                   shelf: controller.shelf,
+                  fileDrag: controller.fileDrag,
+                  endFileDrag: controller.endFileDrag,
                   airDrop: controller.airDrop,
                   show: controller.grow)
             .contextMenu {
