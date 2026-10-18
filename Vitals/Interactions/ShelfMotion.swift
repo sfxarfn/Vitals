@@ -11,10 +11,10 @@ import UniformTypeIdentifiers
 
 // MARK: Drop
 
-/// File URLs from a drop. Providers are the source of truth — SwiftUI claims
-/// the drag pasteboard, so a sync read of it is only a fallback. `URL` does
-/// not conform to `NSItemProviderReading`; `NSURL` does, and a file promise
-/// that will not bridge that way comes back as `UTType.fileURL` data.
+/// File URLs from a drop. `performDrop` reads the drag pasteboard before it
+/// returns; providers are only for a promise that is not on the board yet.
+/// `URL` does not conform to `NSItemProviderReading`; `NSURL` does, and a file
+/// promise that will not bridge that way comes back as `UTType.fileURL` data.
 enum DragboardFiles {
     static func read() -> [URL] {
         let board = NSPasteboard(name: .drag)
@@ -96,20 +96,22 @@ struct ShelfFileDrop: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         let point = info.location
         let providers = info.itemProviders(for: [.fileURL])
-        let finish = onPerform
-        // Nothing to load and nothing already on the pasteboard: reject the
-        // drop. Do not report success for an empty transfer.
-        guard !providers.isEmpty else {
-            let pasted = DragboardFiles.read()
-            guard !pasted.isEmpty else { return false }
-            return finish(pasted, point)
+        // Synchronous, before this returns. A pasteboard that already has the
+        // files is the whole drop — no landing can arrive after the panel has
+        // closed, because nothing is waiting on a provider callback.
+        let pasted = DragboardFiles.read()
+        if !pasted.isEmpty {
+            return onPerform(pasted, point)
         }
-        // `performDrop` has to return before the providers will yield. Returning
-        // true keeps them alive; the shelf and AirDrop run only after at least
-        // one URL has actually loaded. An empty load ends the drag and adds nothing.
+        // Empty board and no providers: the drop is empty. Do not report success.
+        guard !providers.isEmpty else { return false }
+        // A file promise is not on the board yet, so emptiness is not knowable
+        // here. Returning true keeps the providers alive. The completion adds
+        // nothing when the load is empty, and it will not animate unless the
+        // panel is still up — `catchOnShelf` checks that.
+        let finish = onPerform
         Task { @MainActor in
-            var loaded = await DragboardFiles.load(providers)
-            if loaded.isEmpty { loaded = DragboardFiles.read() }
+            let loaded = await DragboardFiles.load(providers)
             guard !loaded.isEmpty else {
                 NotchController.shared?.fileDragEnded()
                 return
@@ -152,10 +154,14 @@ extension NotchView {
     /// are not a landing — the box already held them, so it does not squash.
     @discardableResult
     func catchOnShelf(_ urls: [URL], at point: CGPoint) -> Bool {
+        guard !urls.isEmpty else { return false }
         let fresh = shelf.add(urls)
+        // A promised file can finish loading after the notch has left the
+        // panel. The URLs still belong in the box; the squash, ripple, and
+        // fresh-chip arrival do not.
+        guard state == .panel else { return true }
         panelBody = .shelf
         NotchController.shared?.fileDragEnded()
-        guard !urls.isEmpty else { return false }
         // A duplicate still caught the file; it just has nothing new to settle.
         shelfDropHaptic()
         guard !fresh.isEmpty else { return true }
@@ -169,6 +175,12 @@ extension NotchView {
     @discardableResult
     func catchAirDrop(_ urls: [URL]) -> Bool {
         guard !urls.isEmpty else { return false }
+        // Same late-load case. Sending after the panel is gone would raise a
+        // share sheet over whatever is now in front; keep the files instead.
+        guard state == .panel else {
+            shelf.add(urls)
+            return true
+        }
         NotchController.shared?.fileDragEnded()
         shelfDropHaptic()
         playLanding()
@@ -177,14 +189,20 @@ extension NotchView {
     }
 
     /// Squash in, then spring back. One shot — the completion is what lets go,
-    /// so a drop cannot leave the silhouette pinched.
+    /// so a drop cannot leave the silhouette pinched. No-op once the panel is
+    /// gone: `landSquash` is what `reach` pins on, and a pill must not inherit it.
     func playLanding() {
+        guard state == .panel else { return }
         landFlash = true
         withAnimation(.easeOut(duration: 0.4)) { landFlash = false }
         guard !reduceMotion else { return }
         withAnimation(.spring(response: 0.14, dampingFraction: 0.46)) {
             landSquash = true
         } completion: {
+            guard state == .panel else {
+                landSquash = false
+                return
+            }
             withAnimation(.spring(response: 0.44, dampingFraction: 0.56)) {
                 landSquash = false
             }

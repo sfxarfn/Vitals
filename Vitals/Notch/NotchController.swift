@@ -30,12 +30,18 @@ final class NotchController {
     private(set) var fileDrag: FileDrag?
     /// A file drag is in hand, whether or not it is near the housing. The
     /// pointing-hand tracking must not paint over the drag cursor. Cleared on
-    /// mouse-up, on drop, and when a shelf item's own drag ends.
+    /// mouse-up only — `fileDragEnded` can run while the button is still down
+    /// (the drag left the panel, a drop began) and must not give the hand back
+    /// the cursor for the rest of the gesture.
     private(set) var draggingFile = false
-    /// Resolved once per mouse-down, not per pixel.
+    /// Resolved once per drag, not per pixel. `dragMenuBarVisible` is the
+    /// menu-bar probe from that same moment — fullscreen does not change
+    /// under a drag often enough to walk the window list on every move.
     private var dragIsFile: Bool?
-    /// A file drag asked for the arrow, but the mouse button was still down.
-    /// Mouse-up is what actually puts it back — escape cancels before that.
+    private var dragMenuBarVisible: Bool?
+    /// A file drag ended while the button was still down. Mouse-up is what
+    /// puts the arrow back. Escape is not part of this: an accessory app does
+    /// not see it while Finder is frontmost.
     private var arrowAfterDrag = false
 
     private var engine = EventEngine()
@@ -148,19 +154,12 @@ final class NotchController {
         ) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
         }
-        localDragMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .keyDown]) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if event.type == .leftMouseUp {
-                    self.pointerReleased()
-                    return
-                }
-                // Escape cancels a drag while the button is still down, and the
-                // global monitor does not see keys delivered to this panel.
-                if event.type == .keyDown, event.keyCode == 53 {
-                    self.fileDragEnded()
-                }
-            }
+        // Mouse-up over this window never reaches the global monitor. That is
+        // the cursor restore. Escape is not: Finder keeps it when Finder is
+        // frontmost, and the button-up ends the drag either way. The monitor
+        // returns the event unchanged, so it cannot swallow a click.
+        localDragMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            MainActor.assumeIsolated { self?.pointerReleased() }
             return event
         }
     }
@@ -232,6 +231,11 @@ final class NotchController {
         // The hosting view survives a move between displays — rebuilding it
         // would restart every animation the notch is in the middle of.
         if isNew { panel.contentView = NSHostingView(rootView: NotchRoot(controller: self)) }
+        // A rebuilt panel must not come back hit-testing with mouse-moved left
+        // on from `makePanel`'s old default. Both flags follow the interaction.
+        let interactive = state == .peek || state == .panel
+        panel.ignoresMouseEvents = !interactive
+        panel.acceptsMouseMovedEvents = interactive
         place(panel, screen: screen, notch: notch, display: true)
         panel.orderFrontRegardless()
         window = panel
@@ -293,9 +297,11 @@ final class NotchController {
         panel.isFloatingPanel = true
         panel.level = .mainMenu + 3
         // A nonactivating panel never becomes key, and cursor rects (what
-        // `pointerStyle` installs) are ignored until it does. Mouse-moved has
-        // to be requested or hover stays silent whenever Vitals is not front.
-        panel.acceptsMouseMovedEvents = true
+        // `pointerStyle` installs) are ignored until it does. Mouse-moved stays
+        // off until an Interaction is actually hit-testing: `grow` sets this
+        // and `ignoresMouseEvents = false` together, `shrink` clears both.
+        // Rest never has mouse-moved on while the panel is taking hits.
+        panel.acceptsMouseMovedEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         return panel
     }
@@ -308,6 +314,12 @@ final class NotchController {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                     kCGNullWindowID) as? [[String: Any]] else { return true }
         return list.contains { ($0[kCGWindowLayer as String] as? Int) == 24 }
+    }
+
+    /// Menu-bar visibility for a pointer event. A file drag already resolved
+    /// this once; walking the window list per move is the cost this avoids.
+    private func menuBarVisibleNow() -> Bool {
+        dragMenuBarVisible ?? menuBarVisible()
     }
 
     // MARK: Telemetry → Events
@@ -646,29 +658,51 @@ final class NotchController {
         fileDrag = nil
     }
 
-    /// Drop, mouse-up, and escape over the panel. Clears the drag flag before
-    /// putting the arrow back — `hand()` refuses to paint while a drag owns
-    /// the cursor, so leaving the flag set is how the hand stays up.
-    /// If the button is still down (escape), the arrow waits for mouse-up so
-    /// the drag cursor is not fighting us for the rest of the gesture.
+    /// The drag left the panel, a drop landed, or a shelf item's own drag
+    /// ended. Does not clear `draggingFile` while the button is still down —
+    /// that flag is what stops the pointing hand painting over the drag cursor,
+    /// and mouse-up is the only thing that means the drag is actually over.
     func fileDragEnded() {
-        let ended = draggingFile || fileDrag != nil
+        let buttonUp = NSEvent.pressedMouseButtons & 1 == 0
+        finishFileDrag(clearDragging: buttonUp)
+    }
+
+    /// Mouse-up over this window never reaches the global monitor. The button
+    /// is up even when `pressedMouseButtons` still reports it for the duration
+    /// of the up event, so the drag flag clears here.
+    private func pointerReleased() {
+        finishFileDrag(clearDragging: true)
+    }
+
+    private func finishFileDrag(clearDragging: Bool) {
+        let wasDrag = draggingFile || fileDrag != nil || arrowAfterDrag
         dragBaseline = -1
         dragIsFile = nil
-        draggingFile = false
+        dragMenuBarVisible = nil
         endFileDrag()
-        if ended { arrowAfterDrag = true }
-        guard arrowAfterDrag, NSEvent.pressedMouseButtons & 1 == 0 else { return }
+        guard clearDragging else {
+            if wasDrag { arrowAfterDrag = true }
+            return
+        }
+        draggingFile = false
+        if wasDrag { arrowAfterDrag = true }
+        restoreCursorAfterDrag()
+    }
+
+    /// Arrow only if this drag had a reason to have changed it: the pointer is
+    /// over our panel, or a Vitals control had claimed the hand. A mouse-up in
+    /// Finder must not clobber Finder's cursor.
+    private func restoreCursorAfterDrag() {
+        let pending = arrowAfterDrag
+        let restore = pointerOverPanel || VitalsCursor.wantsRestore
         arrowAfterDrag = false
+        guard pending, restore else { return }
         VitalsCursor.forceArrow()
     }
 
-    /// Mouse-up over this window never reaches the global monitor.
-    private func pointerReleased() {
-        fileDragEnded()
-        guard arrowAfterDrag else { return }
-        arrowAfterDrag = false
-        VitalsCursor.forceArrow()
+    private var pointerOverPanel: Bool {
+        guard let window else { return false }
+        return window.frame.contains(NSEvent.mouseLocation)
     }
 
     /// Shelf drops and an item dragged out of the shelf end on the view, which
@@ -683,7 +717,11 @@ final class NotchController {
     /// the lean from there. Quantized so a moving pointer does not republish
     /// every pixel — nothing here runs unless a drag is already in hand.
     private func trackFileDrag() {
-        guard dragBaseline != -1,
+        // `dragIsFile` and the menu-bar bit were resolved once, on the drag
+        // that started this gesture. Probing the pasteboard or the window list
+        // here would run on every move.
+        guard dragIsFile == true, dragMenuBarVisible == true,
+              dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
               let screen, let notch = notchRect else {
             endFileDrag()
@@ -697,9 +735,7 @@ final class NotchController {
         let near = abs(p.x - notch.midX) < span
             && p.y < screen.frame.maxY + 4
             && p.y > notch.minY - 110
-        guard (atRest || state == .peek), near, menuBarVisible(),
-              dragPasteboard.canReadObject(forClasses: [NSURL.self],
-                                           options: [.urlReadingFileURLsOnly: true]) else {
+        guard (atRest || state == .peek), near else {
             endFileDrag()
             return
         }
@@ -723,14 +759,13 @@ final class NotchController {
     /// Watching the drag pasteboard is what lets the shelf open under the
     /// cursor; from there the panel is live and SwiftUI's own drop takes over.
     private func dragMoved() {
-        guard atRest || state == .peek, dragBaseline != -1,
+        // The count changes the moment any drag starts, window drags included.
+        // Whether it is a file, and whether the menu bar is up, was decided
+        // once when the drag began.
+        guard dragIsFile == true, dragMenuBarVisible == true,
+              atRest || state == .peek, dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
-              let notch = notchRect, notch.contains(NSEvent.mouseLocation),
-              menuBarVisible() else { return }
-        // The count changes the moment any drag starts, window drags included,
-        // so the payload still has to be something the shelf can hold.
-        guard dragPasteboard.canReadObject(forClasses: [NSURL.self],
-                                           options: [.urlReadingFileURLsOnly: true]) else { return }
+              let notch = notchRect, notch.contains(NSEvent.mouseLocation) else { return }
         grow()
     }
 
@@ -746,13 +781,14 @@ final class NotchController {
     private func handle(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            if arrowAfterDrag {
-                arrowAfterDrag = false
-                VitalsCursor.forceArrow()
+            // A new click means the previous drag's button is up. Restore the
+            // arrow only if that drag had claimed it; then start a fresh baseline.
+            if draggingFile || arrowAfterDrag {
+                finishFileDrag(clearDragging: true)
             }
             dragBaseline = dragPasteboard.changeCount
             dragIsFile = nil
-            draggingFile = false
+            dragMenuBarVisible = nil
             endFileDrag()
         case .leftMouseUp:
             pointerReleased()
@@ -764,6 +800,7 @@ final class NotchController {
                     forClasses: [NSURL.self],
                     options: [.urlReadingFileURLsOnly: true]
                 )
+                dragMenuBarVisible = menuBarVisible()
             }
             if dragIsFile == true { draggingFile = true }
             trackFileDrag()
@@ -797,7 +834,7 @@ final class NotchController {
 
         // An Interaction needs a dwell delay, or peek fires every time the
         // pointer crosses the notch on its way to the menu bar.
-        guard notch.contains(p), menuBarVisible(), atRest else {
+        guard notch.contains(p), menuBarVisibleNow(), atRest else {
             dwell?.invalidate(); dwell = nil
             return
         }
@@ -823,6 +860,7 @@ final class NotchController {
         // to 10s stale on the resting poll, which is longer than a hover.
         telemetry.grown = true
         window?.ignoresMouseEvents = false
+        window?.acceptsMouseMovedEvents = true
     }
 
     /// Back to the floor: idle, or the Activity still running under it.
@@ -830,13 +868,15 @@ final class NotchController {
         dwell?.invalidate(); dwell = nil
         // The control under the pointer is about to leave the hierarchy, and
         // its tracking area does not always get mouseExited once this window
-        // stops taking events. Put the arrow back before that happens.
-        draggingFile = false
+        // stops taking events. Drop every hover claim. `forceArrow` leaves the
+        // drag cursor alone while a file is still in hand — mouse-up clears
+        // `draggingFile`, not this.
         VitalsCursor.forceArrow()
         clearSided()
         state = resting
         telemetry.grown = false
         window?.ignoresMouseEvents = true
+        window?.acceptsMouseMovedEvents = false
         presentNext()
     }
 }

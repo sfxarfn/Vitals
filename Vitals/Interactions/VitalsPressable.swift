@@ -9,8 +9,45 @@ import AppKit
 import SwiftUI
 
 enum VitalsCursor {
+    /// Controls currently under the pointer. One `mouseExited` must not put the
+    /// arrow back while a neighbour is still hovered. `forceArrow` zeroes this
+    /// and bumps `generation`, so a missed exit cannot leak the way the old
+    /// counter did — a claim from before the reset no longer decrements it.
+    private static var hovered = 0
+    private static var generation = 0
+    /// `arrow()` was skipped because a file drag owned the cursor. Mouse-up
+    /// uses this so the hand cannot survive a drag that ended outside the panel.
+    private static var needsRestore = false
+
+    /// A drag should put the arrow back: a control still holds the hand, or
+    /// `arrow()` tried to and the drag cursor was in the way.
+    static var wantsRestore: Bool { needsRestore || hovered > 0 }
+
     private static var dragOwnsCursor: Bool {
         NotchController.shared?.draggingFile == true
+    }
+
+    /// Record one control under the pointer and show the hand. Returns the
+    /// generation the caller must pass back to `release`.
+    @discardableResult
+    static func claim() -> Int {
+        hovered += 1
+        hand()
+        return generation
+    }
+
+    /// Whether `claimedGeneration` is still the live one. `forceArrow` retires
+    /// every claim it did not see released.
+    fileprivate static func matches(_ claimedGeneration: Int) -> Bool {
+        claimedGeneration == generation
+    }
+
+    /// Drop one claim from `claim()`. A generation that `forceArrow` has
+    /// already retired does nothing — that is the missed-exit case.
+    static func release(_ claimedGeneration: Int) {
+        guard claimedGeneration == generation else { return }
+        hovered = max(0, hovered - 1)
+        arrow()
     }
 
     /// Pointing hand, unless a file drag is in progress — that cursor belongs
@@ -20,14 +57,35 @@ enum VitalsCursor {
         NSCursor.pointingHand.set()
     }
 
-    /// Always the arrow. A claim count used to skip this, which is how the
-    /// hand survived leaving a control, closing the panel, and cancelling a drag.
+    /// The arrow, unless a file drag owns the cursor or a control is still
+    /// hovered. A drag cursor and a neighbour's hand both win over this.
+    /// While a drag owns the cursor the request is remembered for mouse-up.
     static func arrow() {
+        if dragOwnsCursor {
+            needsRestore = true
+            return
+        }
+        guard hovered == 0 else { return }
         NSCursor.arrow.set()
     }
 
+    /// Panel close, the view leaving its window, and a drag ending over us.
+    /// Drops every claim so a missed `mouseExited` cannot leave the hand up,
+    /// then the arrow — unless a file drag still owns the cursor, in which
+    /// case mouse-up is what paints it.
     static func forceArrow() {
-        arrow()
+        let claimed = hovered > 0 || needsRestore
+        hovered = 0
+        generation &+= 1
+        // A drag still owns the cursor. Remember the restore only if a control
+        // had actually claimed the hand — closing the panel must not make every
+        // later mouse-up in Finder paint our arrow.
+        if dragOwnsCursor {
+            if claimed { needsRestore = true }
+            return
+        }
+        needsRestore = false
+        NSCursor.arrow.set()
     }
 }
 
@@ -66,6 +124,9 @@ private struct PressableChrome<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
+    /// Generation returned by `VitalsCursor.claim`, so leaving this control
+    /// releases only its own claim and a reset cannot be decremented twice.
+    @State private var claimGeneration: Int?
 
     var body: some View {
         content()
@@ -81,7 +142,7 @@ private struct PressableChrome<Content: View>: View {
             .onContinuousHover { phase in
                 guard isEnabled else {
                     hovered = false
-                    VitalsCursor.arrow()
+                    releaseCursor()
                     return
                 }
                 switch phase {
@@ -89,18 +150,36 @@ private struct PressableChrome<Content: View>: View {
                     if !hovered { hovered = true }
                     // Backup for the tracking area: SwiftUI hover sees the
                     // control when the window is taking mouse-moved events.
-                    VitalsCursor.hand()
+                    claimCursor()
                 case .ended:
                     hovered = false
-                    VitalsCursor.arrow()
+                    releaseCursor()
                 }
             }
             .onDisappear {
                 // The panel can close under the pointer. Hover-ended does not
                 // always arrive once the window stops taking mouse events.
                 hovered = false
-                VitalsCursor.arrow()
+                releaseCursor()
             }
+    }
+
+    private func claimCursor() {
+        // A `forceArrow` since we claimed retired that generation. Claim again
+        // rather than treating a stale token as still held.
+        if let generation = claimGeneration, VitalsCursor.matches(generation) {
+            VitalsCursor.hand()
+            return
+        }
+        claimGeneration = VitalsCursor.claim()
+    }
+
+    private func releaseCursor() {
+        // Nothing claimed: this control never set the hand, so it must not
+        // clear a neighbour or latch a drag restore.
+        guard let generation = claimGeneration else { return }
+        claimGeneration = nil
+        VitalsCursor.release(generation)
     }
 
     private var scale: CGFloat {
@@ -132,15 +211,19 @@ private struct PointingCursor: NSViewRepresentable {
 
     final class TrackingView: NSView {
         private var updating = false
+        /// Set in `detach`. `updateTrackingAreas` runs again as the view leaves
+        /// and must not install a new area — the area retains its owner.
+        private var detached = false
+        private var claimGeneration: Int?
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
-            // No window means the view is on its way out. Adding an area here
-            // would retain this view (`NSTrackingArea` retains its owner) after
-            // the hierarchy has already dropped it.
-            guard window != nil else {
+            // No window, or already detached: adding an area here would retain
+            // this view (`NSTrackingArea` retains its owner) after the hierarchy
+            // has dropped it.
+            guard !detached, window != nil else {
                 detachAreas()
                 return
             }
@@ -156,15 +239,20 @@ private struct PointingCursor: NSViewRepresentable {
             ))
         }
 
+        override func mouseEntered(with event: NSEvent) {
+            claim()
+        }
+
         override func cursorUpdate(with event: NSEvent) {
             // Re-assert on every cursor pass. AppKit asks again whenever the
             // window is not key, which is always, and would otherwise put the
-            // arrow back.
+            // arrow back. Claiming is once per generation, not once per pass.
+            claim()
             VitalsCursor.hand()
         }
 
         override func mouseExited(with event: NSEvent) {
-            VitalsCursor.arrow()
+            release()
         }
 
         override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -174,12 +262,26 @@ private struct PointingCursor: NSViewRepresentable {
             super.viewWillMove(toWindow: newWindow)
         }
 
-        /// Drop the tracking area before the view leaves the window, then the
-        /// arrow. The area retains its owner, so leaving it installed leaks the
-        /// view and can set the hand again after the panel has closed.
+        /// Drop the tracking area before the view leaves the window, then this
+        /// view's claim. The area retains its owner, so leaving it installed
+        /// leaks the view and can set the hand again after the panel has closed.
         func detach() {
+            guard !detached else { return }
+            detached = true
             detachAreas()
-            VitalsCursor.arrow()
+            release()
+        }
+
+        private func claim() {
+            guard !detached else { return }
+            if let generation = claimGeneration, VitalsCursor.matches(generation) { return }
+            claimGeneration = VitalsCursor.claim()
+        }
+
+        private func release() {
+            guard let generation = claimGeneration else { return }
+            claimGeneration = nil
+            VitalsCursor.release(generation)
         }
 
         private func detachAreas() {

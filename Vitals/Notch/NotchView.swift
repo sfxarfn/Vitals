@@ -58,7 +58,9 @@ struct NotchView: View {
     @State var airDropOrigin: CGPoint = .zero
     /// Bumped when peek or the panel opens, or when one Interaction becomes the
     /// other. Leaving onto anything else snaps the pose to 1 instead.
-    @State var rubber = RubberTrigger()
+    /// Private because `RubberTrigger` is private — an internal property of a
+    /// private type does not compile. Nothing outside this file reads it.
+    @State private var rubber = RubberTrigger()
     /// -1…1, where the drag sits across the open panel. Only written from a
     /// drop session, so it is idle at rest.
     @State var dragLean: CGFloat = 0
@@ -290,6 +292,12 @@ struct NotchView: View {
                 landSquash = false
                 liftingURL = nil
                 liftTilt = 0
+                // A landing that finishes after the panel has gone must not be
+                // waiting here to replay the ripple and the fresh-chip scale
+                // the next time the shelf opens.
+                freshURLs = []
+                ripplePoint = nil
+                landFlash = false
             }
             if new != .peek && new != .panel { VitalsCursor.forceArrow() }
             guard !reduceMotion, old != new else { return }
@@ -314,27 +322,30 @@ struct NotchView: View {
     /// plays, so clearing the drag cue in the same turn does not collapse it
     /// out from under the jelly.
     var reach: CGFloat {
-        if landSquash { return 1 }
-        if shelfTargeted || airDropTargeted { return 1 }
+        // Landing and targeting belong to the open panel. A flag still set for
+        // the frame after the notch leaves it must not keep a pill reached.
+        if state == .panel, landSquash || shelfTargeted || airDropTargeted { return 1 }
         return fileDrag?.pull ?? 0
     }
 
     var lean: CGFloat {
         guard !reduceMotion else { return 0 }
-        if shelfTargeted || airDropTargeted || landSquash { return dragLean }
+        if state == .panel, shelfTargeted || airDropTargeted || landSquash { return dragLean }
         return (fileDrag?.lean ?? 0) * (fileDrag?.pull ?? 0)
     }
+
+    private var landingSquash: Bool { state == .panel && landSquash }
 
     var silhouetteX: CGFloat {
         guard !reduceMotion else { return 1 }
         let awake = 1 + reach * 0.03 + abs(lean) * reach * 0.015
-        return landSquash ? awake * 1.06 : awake
+        return landingSquash ? awake * 1.06 : awake
     }
 
     var silhouetteY: CGFloat {
         guard !reduceMotion else { return 1 }
         let awake = 1 + reach * 0.055
-        return landSquash ? awake * 0.92 : awake
+        return landingSquash ? awake * 0.92 : awake
     }
 
     /// A few points toward the file. Anchored at the top edge, so the housing
@@ -345,10 +356,11 @@ struct NotchView: View {
     }
 
     var rimOpacity: Double {
+        let onPanel = state == .panel
         if reduceMotion {
-            return (shelfTargeted || airDropTargeted || landFlash) ? 0.35 : 0
+            return (onPanel && (shelfTargeted || airDropTargeted || landFlash)) ? 0.35 : 0
         }
-        if landSquash || landFlash { return 0.85 }
+        if onPanel && (landSquash || landFlash) { return 0.85 }
         return Double(reach) * 0.65
     }
 
