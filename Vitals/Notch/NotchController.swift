@@ -689,20 +689,27 @@ final class NotchController {
         restoreCursorAfterDrag()
     }
 
-    /// Arrow only if this drag had a reason to have changed it: the pointer is
-    /// over our panel, or a Vitals control had claimed the hand. A mouse-up in
-    /// Finder must not clobber Finder's cursor.
+    /// Arrow only when the pointer is on the shape that is actually taking
+    /// hits. The window frame is the full panel plus its shadow in every state,
+    /// including while `ignoresMouseEvents` is true, so it is not that shape.
+    /// A mouse-up anywhere else leaves the cursor alone.
     private func restoreCursorAfterDrag() {
         let pending = arrowAfterDrag
-        let restore = pointerOverPanel || VitalsCursor.wantsRestore
         arrowAfterDrag = false
-        guard pending, restore else { return }
+        guard pending, pointerOverOpenNotch else { return }
         VitalsCursor.forceArrow()
     }
 
-    private var pointerOverPanel: Bool {
-        guard let window else { return false }
-        return window.frame.contains(NSEvent.mouseLocation)
+    /// Visible peek or panel, and only while that window is hit-testing.
+    private var pointerOverOpenNotch: Bool {
+        guard window?.ignoresMouseEvents == false, let screen,
+              state == .peek || state == .panel else { return false }
+        let shape = metrics.size(for: state, extensions: extensions)
+        let rect = CGRect(x: screen.frame.midX - shape.width / 2
+                          + metrics.lean(for: state, extensions: extensions),
+                          y: screen.frame.maxY - shape.height,
+                          width: shape.width, height: shape.height)
+        return rect.contains(NSEvent.mouseLocation)
     }
 
     /// Shelf drops and an item dragged out of the shelf end on the view, which
@@ -781,8 +788,8 @@ final class NotchController {
     private func handle(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            // A new click means the previous drag's button is up. Restore the
-            // arrow only if that drag had claimed it; then start a fresh baseline.
+            // A new click means the previous drag's button is up. The arrow
+            // comes back only if this click is on the open shape.
             if draggingFile || arrowAfterDrag {
                 finishFileDrag(clearDragging: true)
             }

@@ -101,19 +101,25 @@ struct ShelfFileDrop: DropDelegate {
         // closed, because nothing is waiting on a provider callback.
         let pasted = DragboardFiles.read()
         if !pasted.isEmpty {
+            // Same live-state gate as the promise path. `onPerform` closes over
+            // the view from this render; the landing functions read the controller.
             return onPerform(pasted, point)
         }
         // Empty board and no providers: the drop is empty. Do not report success.
         guard !providers.isEmpty else { return false }
         // A file promise is not on the board yet, so emptiness is not knowable
-        // here. Returning true keeps the providers alive. The completion adds
-        // nothing when the load is empty, and it will not animate unless the
-        // panel is still up — `catchOnShelf` checks that.
+        // here. Returning true keeps the providers alive. An empty load adds
+        // nothing. A load that finishes after the notch has left does not call
+        // `onPerform` — that closure's `state` is still `.panel`.
         let finish = onPerform
         Task { @MainActor in
             let loaded = await DragboardFiles.load(providers)
             guard !loaded.isEmpty else {
                 NotchController.shared?.fileDragEnded()
+                return
+            }
+            guard NotchController.shared?.state == .panel else {
+                NotchController.shared?.shelf.add(loaded)
                 return
             }
             _ = finish(loaded, point)
@@ -150,16 +156,23 @@ extension NotchView {
         }
     }
 
+    /// `state` on this value is whatever render built the drop closure. A promise
+    /// finishes on that copy, so the let stays `.panel` after the notch has left.
+    /// The controller is the notch that is actually up.
+    private var panelIsLive: Bool {
+        NotchController.shared?.state == .panel
+    }
+
     /// Files aimed anywhere on the open panel land in the shelf. Duplicates
     /// are not a landing — the box already held them, so it does not squash.
     @discardableResult
     func catchOnShelf(_ urls: [URL], at point: CGPoint) -> Bool {
         guard !urls.isEmpty else { return false }
         let fresh = shelf.add(urls)
-        // A promised file can finish loading after the notch has left the
-        // panel. The URLs still belong in the box; the squash, ripple, and
-        // fresh-chip arrival do not.
-        guard state == .panel else { return true }
+        // Off the live panel the URLs still belong in the box. The squash,
+        // ripple, and fresh-chip arrival do not — writing them here is what
+        // replays the landing the next time the shelf opens.
+        guard panelIsLive else { return true }
         panelBody = .shelf
         NotchController.shared?.fileDragEnded()
         // A duplicate still caught the file; it just has nothing new to settle.
@@ -175,9 +188,9 @@ extension NotchView {
     @discardableResult
     func catchAirDrop(_ urls: [URL]) -> Bool {
         guard !urls.isEmpty else { return false }
-        // Same late-load case. Sending after the panel is gone would raise a
-        // share sheet over whatever is now in front; keep the files instead.
-        guard state == .panel else {
+        // Sending after the panel is gone raises a share sheet over whatever
+        // is now in front. Keep the files; do not AirDrop.
+        guard panelIsLive else {
             shelf.add(urls)
             return true
         }
@@ -189,17 +202,17 @@ extension NotchView {
     }
 
     /// Squash in, then spring back. One shot — the completion is what lets go,
-    /// so a drop cannot leave the silhouette pinched. No-op once the panel is
-    /// gone: `landSquash` is what `reach` pins on, and a pill must not inherit it.
+    /// so a drop cannot leave the silhouette pinched. No-op once the live panel
+    /// is gone: `landSquash` is what `reach` pins on, and a pill must not inherit it.
     func playLanding() {
-        guard state == .panel else { return }
+        guard panelIsLive else { return }
         landFlash = true
         withAnimation(.easeOut(duration: 0.4)) { landFlash = false }
         guard !reduceMotion else { return }
         withAnimation(.spring(response: 0.14, dampingFraction: 0.46)) {
             landSquash = true
         } completion: {
-            guard state == .panel else {
+            guard panelIsLive else {
                 landSquash = false
                 return
             }

@@ -15,13 +15,6 @@ enum VitalsCursor {
     /// counter did — a claim from before the reset no longer decrements it.
     private static var hovered = 0
     private static var generation = 0
-    /// `arrow()` was skipped because a file drag owned the cursor. Mouse-up
-    /// uses this so the hand cannot survive a drag that ended outside the panel.
-    private static var needsRestore = false
-
-    /// A drag should put the arrow back: a control still holds the hand, or
-    /// `arrow()` tried to and the drag cursor was in the way.
-    static var wantsRestore: Bool { needsRestore || hovered > 0 }
 
     private static var dragOwnsCursor: Bool {
         NotchController.shared?.draggingFile == true
@@ -59,32 +52,21 @@ enum VitalsCursor {
 
     /// The arrow, unless a file drag owns the cursor or a control is still
     /// hovered. A drag cursor and a neighbour's hand both win over this.
-    /// While a drag owns the cursor the request is remembered for mouse-up.
+    /// A suppressed arrow is not remembered: mouse-up outside the open shape
+    /// must not paint it later.
     static func arrow() {
-        if dragOwnsCursor {
-            needsRestore = true
-            return
-        }
+        guard !dragOwnsCursor else { return }
         guard hovered == 0 else { return }
         NSCursor.arrow.set()
     }
 
-    /// Panel close, the view leaving its window, and a drag ending over us.
-    /// Drops every claim so a missed `mouseExited` cannot leave the hand up,
-    /// then the arrow — unless a file drag still owns the cursor, in which
-    /// case mouse-up is what paints it.
+    /// Panel close, the view leaving its window, and a drag ending over the
+    /// open shape. Drops every claim so a missed `mouseExited` cannot leave the
+    /// hand up, then the arrow — unless a file drag still owns the cursor.
     static func forceArrow() {
-        let claimed = hovered > 0 || needsRestore
         hovered = 0
         generation &+= 1
-        // A drag still owns the cursor. Remember the restore only if a control
-        // had actually claimed the hand — closing the panel must not make every
-        // later mouse-up in Finder paint our arrow.
-        if dragOwnsCursor {
-            if claimed { needsRestore = true }
-            return
-        }
-        needsRestore = false
+        guard !dragOwnsCursor else { return }
         NSCursor.arrow.set()
     }
 }
