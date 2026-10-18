@@ -21,8 +21,7 @@ extension NotchView {
                 } label: {
                     readout("thermometer.medium", tempValue, tint: tempTint)
                 }
-                .buttonStyle(.plain)
-                .vitalsPressable()
+                .buttonStyle(VitalsPressStyle())
                 // Outside the button, so the flank keeps the exact geometry it
                 // had before it became one — peek and the build share this width.
                 .flankSlot(metrics.statFlanks.left, .leading, pad: metrics.notchPad)
@@ -49,8 +48,7 @@ extension NotchView {
             } label: {
                 networkStatus
             }
-            .buttonStyle(.plain)
-            .vitalsPressable()
+            .buttonStyle(VitalsPressStyle())
             Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
                 .padding(.horizontal, 4)
             // The summary is also the way into the numbers behind it — the panel
@@ -61,8 +59,7 @@ extension NotchView {
             } label: {
                 batteryStatus
             }
-            .buttonStyle(.plain)
-            .vitalsPressable()
+            .buttonStyle(VitalsPressStyle())
             Rectangle().fill(.white.opacity(0.15)).frame(width: 1, height: 22)
                 .padding(.horizontal, 4)
             // Fills up when the shelf is holding something, so the hover says
@@ -77,15 +74,13 @@ extension NotchView {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.white.opacity(0.55))
             }
-            .buttonStyle(.plain)
-            .vitalsPressable()
+            .buttonStyle(VitalsPressStyle())
             SettingsLink {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.white.opacity(0.55))
             }
-            .buttonStyle(.plain)
-            .vitalsPressable()
+            .buttonStyle(VitalsPressStyle())
         }
     }
 

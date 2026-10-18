@@ -11,9 +11,10 @@ import UniformTypeIdentifiers
 
 // MARK: Drop
 
-/// Reads the drag pasteboard the same way the controller decides a drag is a
-/// file at all. Synchronous, so the shelf can spring the new rows in the drop
-/// that just landed instead of waiting on a provider callback.
+/// File URLs from a drop. Providers are the source of truth — SwiftUI claims
+/// the drag pasteboard, so a sync read of it is only a fallback. `URL` does
+/// not conform to `NSItemProviderReading`; `NSURL` does, and a file promise
+/// that will not bridge that way comes back as `UTType.fileURL` data.
 enum DragboardFiles {
     static func read() -> [URL] {
         let board = NSPasteboard(name: .drag)
@@ -21,23 +22,54 @@ enum DragboardFiles {
                                               options: [.urlReadingFileURLsOnly: true]) as? [NSURL] else {
             return []
         }
-        return objects.map { $0 as URL }
+        return unique(objects.map { $0 as URL })
     }
 
-    static func load(_ providers: [NSItemProvider]) async -> [URL] {
+    /// Nonisolated so the provider callbacks — which are `@Sendable` and may
+    /// run off the main actor — are not main-actor closures. The caller hops
+    /// back to the main actor before touching the shelf.
+    nonisolated static func load(_ providers: [NSItemProvider]) async -> [URL] {
         var urls: [URL] = []
         for provider in providers {
-            if let url = await one(provider) { urls.append(url) }
+            if let url = await loadOne(provider) { urls.append(url) }
         }
-        return urls
+        return unique(urls)
     }
 
-    private static func one(_ provider: NSItemProvider) async -> URL? {
+    private nonisolated static func loadOne(_ provider: NSItemProvider) async -> URL? {
+        if let url = await loadNSURL(provider) { return url }
+        return await loadFileURL(provider)
+    }
+
+    private nonisolated static func loadNSURL(_ provider: NSItemProvider) async -> URL? {
         await withCheckedContinuation { continuation in
-            provider.loadObject(ofClass: URL.self) { object, _ in
+            provider.loadObject(ofClass: NSURL.self) { object, _ in
                 continuation.resume(returning: object as? URL)
             }
         }
+    }
+
+    private nonisolated static func loadFileURL(_ provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                continuation.resume(returning: url(from: item))
+            }
+        }
+    }
+
+    private nonisolated static func url(from item: NSSecureCoding?) -> URL? {
+        if let url = item as? URL { return url }
+        if let url = item as? NSURL { return url as URL }
+        guard let data = item as? Data else { return nil }
+        return URL(dataRepresentation: data, relativeTo: nil)
+    }
+
+    private nonisolated static func unique(_ urls: [URL]) -> [URL] {
+        var seen: [URL] = []
+        for url in urls where !seen.contains(url) {
+            seen.append(url)
+        }
+        return seen
     }
 }
 
@@ -63,16 +95,26 @@ struct ShelfFileDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let point = info.location
-        let urls = DragboardFiles.read()
-        if !urls.isEmpty { return onPerform(urls, point) }
-        // The pasteboard can come back empty once SwiftUI has claimed the
-        // items. The providers are the same files; they just arrive late.
         let providers = info.itemProviders(for: [.fileURL])
-        guard !providers.isEmpty else { return false }
+        let finish = onPerform
+        // Nothing to load and nothing already on the pasteboard: reject the
+        // drop. Do not report success for an empty transfer.
+        guard !providers.isEmpty else {
+            let pasted = DragboardFiles.read()
+            guard !pasted.isEmpty else { return false }
+            return finish(pasted, point)
+        }
+        // `performDrop` has to return before the providers will yield. Returning
+        // true keeps them alive; the shelf and AirDrop run only after at least
+        // one URL has actually loaded. An empty load ends the drag and adds nothing.
         Task { @MainActor in
-            let loaded = await DragboardFiles.load(providers)
-            guard !loaded.isEmpty else { return }
-            _ = onPerform(loaded, point)
+            var loaded = await DragboardFiles.load(providers)
+            if loaded.isEmpty { loaded = DragboardFiles.read() }
+            guard !loaded.isEmpty else {
+                NotchController.shared?.fileDragEnded()
+                return
+            }
+            _ = finish(loaded, point)
         }
         return true
     }
@@ -96,7 +138,14 @@ extension NotchView {
     func releaseDragAim() {
         shelfTargeted = false
         dragLean = 0
-        endFileDrag()
+        // Button still down: the drag moved to another target or off the panel,
+        // and the drag cursor has to stay. Button up: it was cancelled over the
+        // panel, and the global monitor will not see that mouse-up.
+        if NSEvent.pressedMouseButtons & 1 == 0 {
+            NotchController.shared?.fileDragEnded()
+        } else {
+            endFileDrag()
+        }
     }
 
     /// Files aimed anywhere on the open panel land in the shelf. Duplicates
@@ -105,8 +154,7 @@ extension NotchView {
     func catchOnShelf(_ urls: [URL], at point: CGPoint) -> Bool {
         let fresh = shelf.add(urls)
         panelBody = .shelf
-        endFileDrag()
-        NotchController.shared?.setDraggingFile(false)
+        NotchController.shared?.fileDragEnded()
         guard !urls.isEmpty else { return false }
         // A duplicate still caught the file; it just has nothing new to settle.
         shelfDropHaptic()
@@ -121,8 +169,7 @@ extension NotchView {
     @discardableResult
     func catchAirDrop(_ urls: [URL]) -> Bool {
         guard !urls.isEmpty else { return false }
-        endFileDrag()
-        NotchController.shared?.setDraggingFile(false)
+        NotchController.shared?.fileDragEnded()
         shelfDropHaptic()
         playLanding()
         airDrop(urls)
@@ -148,7 +195,7 @@ extension NotchView {
         if case .ended(let operation) = session.phase {
             // Cancel and a refused drop put the file back. Anything else took
             // it, and the gap closes with the removal.
-            NotchController.shared?.setDraggingFile(false)
+            NotchController.shared?.fileDragEnded()
             switch operation {
             case .cancel, .forbidden:
                 withAnimation(shelfPop) {
@@ -281,9 +328,9 @@ struct ShelfChip: View {
                    value: lifted)
         .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.22, dampingFraction: 0.7),
                    value: tilt)
-        // Hover and the pointing hand, but not a press-drag: that gesture
-        // would take the horizontal scroll and the drag-out of the file.
-        .vitalsPressable(tracksPress: false)
+        // Hover and the pointing hand only. Press scale is a button style;
+        // a drag gesture here would take the horizontal scroll and the drag-out.
+        .vitalsPressable()
         // Insertion is the scale above, from small. Removal is this — the
         // slot closes and the icon leaves, instead of both fighting.
         .transition(.asymmetric(

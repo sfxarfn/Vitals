@@ -1,5 +1,17 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// Name of the panel body coordinate space. AirDrop's drop location is in the
+/// tile's own bounds; lean is measured in this space.
+private let panelDropSpace = "vitals.panel.drop"
+
+private struct AirDropOriginKey: PreferenceKey {
+    static var defaultValue: CGPoint { .zero }
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
+    }
+}
 
 /// What sits in the panel's one body slot. The panel's geometry never changes
 /// with it: the row swaps what it holds, the shape stays the one peek grew into.
@@ -45,6 +57,7 @@ extension NotchView {
         // drag has no way to know are up. The AirDrop tile overrides what
         // happens inside its own bounds. The delegate, not `dropDestination`,
         // because the silhouette has to follow the pointer the whole way in.
+        .coordinateSpace(.named(panelDropSpace))
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL], delegate: ShelfFileDrop(
             onMove: { point in
@@ -78,8 +91,7 @@ extension NotchView {
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.55))
         }
-        .buttonStyle(.plain)
-        .vitalsPressable()
+        .buttonStyle(VitalsPressStyle())
     }
 
     private func settingsButton(size: CGFloat = 12) -> some View {
@@ -95,8 +107,7 @@ extension NotchView {
                         .font(.system(size: size, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
                 }
-                .buttonStyle(.plain)
-                .vitalsPressable()
+                .buttonStyle(VitalsPressStyle())
                 .transition(.opacity)
             }
             SettingsLink {
@@ -104,8 +115,7 @@ extension NotchView {
                     .font(.system(size: size, weight: .medium))
                     .foregroundStyle(.white.opacity(0.55))
             }
-            .buttonStyle(.plain)
-            .vitalsPressable()
+            .buttonStyle(VitalsPressStyle())
         }
     }
 
@@ -114,38 +124,59 @@ extension NotchView {
     /// Drop straight on the tile to send those files; click it to send whatever
     /// is already sitting in the box.
     private var airDropTile: some View {
-        VStack(spacing: 4) {
-            AirDropMark()
-                .stroke(.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                .frame(width: 18, height: 18)
-            Text("AirDrop").font(.system(size: 10, weight: .semibold, design: .rounded))
+        Button {
+            airDrop(shelf.urls)
+        } label: {
+            VStack(spacing: 4) {
+                AirDropMark()
+                    .stroke(.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .frame(width: 18, height: 18)
+                Text("AirDrop").font(.system(size: 10, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(.white)
+            .frame(width: 104).frame(maxHeight: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(LinearGradient(colors: [.blue, .purple],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .brightness(airDropTargeted ? 0.16 : 0)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(.white.opacity(airDropTargeted ? 0.75 : 0), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
-        .foregroundStyle(.white)
-        .frame(width: 104).frame(maxHeight: .infinity)
+        .buttonStyle(VitalsPressStyle())
         .background {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(LinearGradient(colors: [.blue, .purple],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .brightness(airDropTargeted ? 0.16 : 0)
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: AirDropOriginKey.self,
+                    value: proxy.frame(in: .named(panelDropSpace)).origin
+                )
+            }
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(.white.opacity(airDropTargeted ? 0.75 : 0), lineWidth: 1.5)
-                .allowsHitTesting(false)
+        .onPreferenceChange(AirDropOriginKey.self) { origin in
+            if origin != airDropOrigin { airDropOrigin = origin }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .onTapGesture { airDrop(shelf.urls) }
-        .vitalsPressable()
         .onDrop(of: [.fileURL], delegate: ShelfFileDrop(
             onMove: { point in
                 if !airDropTargeted { airDropTargeted = true }
-                followDrag(point)
+                // The tile's drop location is in its own bounds. Lean is measured
+                // across the panel, so add the tile's origin in that space first.
+                followDrag(CGPoint(x: airDropOrigin.x + point.x,
+                                   y: airDropOrigin.y + point.y))
             },
             onExit: {
                 airDropTargeted = false
                 if !shelfTargeted {
                     dragLean = 0
-                    endFileDrag()
+                    if NSEvent.pressedMouseButtons & 1 == 0 {
+                        NotchController.shared?.fileDragEnded()
+                    } else {
+                        endFileDrag()
+                    }
                 }
             },
             onPerform: { urls, _ in catchAirDrop(urls) }

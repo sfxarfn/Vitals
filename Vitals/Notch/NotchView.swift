@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Pose for the peek/panel rubber. Identity at rest; the keyframe animator
-/// only leaves it when `rubberTick` changes.
+/// only leaves it when `rubber` changes, and a snap trigger is every value at 1.
 private struct RubberPose: Equatable, Animatable {
     var x: CGFloat = 1
     var y: CGFloat = 1
@@ -10,6 +10,16 @@ private struct RubberPose: Equatable, Animatable {
         get { .init(x, y) }
         set { x = newValue.first; y = newValue.second }
     }
+}
+
+/// What the keyframe closure reads. Passed as the trigger value so the track
+/// sees snap versus suck from the change itself, not from state captured earlier.
+private struct RubberTrigger: Equatable {
+    var tick = 0
+    var closing = false
+    /// Leaving peek/panel. Every keyframe is identity, so an Event, Activity,
+    /// or Extension mark cannot inherit the suck.
+    var snap = false
 }
 
 /// The shape itself: one black outline that grows and shrinks, whatever is
@@ -43,10 +53,12 @@ struct NotchView: View {
 
     @State var shelfTargeted = false
     @State var airDropTargeted = false
-    /// Bumped only when peek or the panel opens or collapses. The keyframe
-    /// animator stays at rest otherwise — it does not run while idle.
-    @State var rubberTick = 0
-    @State var rubberClosing = false
+    /// Tile origin in the panel drop's coordinate space, so a drag across the
+    /// AirDrop tile leans by where it sits in the panel, not inside 104pt.
+    @State var airDropOrigin: CGPoint = .zero
+    /// Bumped when peek or the panel opens, or when one Interaction becomes the
+    /// other. Leaving onto anything else snaps the pose to 1 instead.
+    @State var rubber = RubberTrigger()
     /// -1…1, where the drag sits across the open panel. Only written from a
     /// drop session, so it is idle at rest.
     @State var dragLean: CGFloat = 0
@@ -221,31 +233,44 @@ struct NotchView: View {
                 .animation(shelfFollow, value: shelfTargeted)
                 .animation(shelfFollow, value: airDropTargeted)
                 .animation(shelfFollow, value: dragLean)
-                // Rubber on the way in and the suck on the way out. Scale, not
-                // a second layout size: the frame above is still the bouncy
-                // growth, and this only flavours peek and the panel. Anchor is
-                // the top edge so the housing stays on the bezel. Reduce Motion
-                // never bumps `rubberTick`, so the pose stays 1 and the frame
-                // animation is the one this view has always used.
-                .keyframeAnimator(initialValue: RubberPose(), trigger: rubberTick) { view, pose in
+                // Rubber on the way in and the suck between peek and the panel.
+                // Scale, not a second layout size: the frame above is still the
+                // bouncy growth. Anchor is the top edge so the housing stays on
+                // the bezel. Reduce Motion never bumps `rubber`, so the pose
+                // stays 1. A snap trigger is every keyframe at 1 — that is what
+                // runs when an Event, Activity, or Extension takes the silhouette,
+                // so the suck cannot play on the pill.
+                .keyframeAnimator(initialValue: RubberPose(), trigger: rubber) { view, pose in
                     view.scaleEffect(x: pose.x, y: pose.y, anchor: .top)
-                } keyframes: { _ in
-                    // One track shape for both directions — the keyframe builder
-                    // needs a single type, and the values are what differ.
+                } keyframes: { trigger in
+                    // One track shape for open, close, and snap — the keyframe
+                    // builder needs a single type, and the values are what differ.
                     // Close: a short stretch, then a dip just under rest, then
                     // settle. Open: hold, then a small overshoot, then settle.
+                    // Snap: identity, immediately.
+                    let closing = trigger.closing && !trigger.snap
+                    let yPeak: CGFloat = trigger.snap ? 1 : (closing ? 1.03 : 1)
+                    let yDip: CGFloat = trigger.snap ? 1 : (closing ? 0.973 : 1.016)
+                    let xPinch: CGFloat = trigger.snap ? 1 : (closing ? 0.99 : 1)
+                    let xOvershoot: CGFloat = trigger.snap ? 1 : 1.008
+                    let first: Double = trigger.snap ? 0.01 : 0.08
+                    let second: Double = trigger.snap ? 0.01 : (closing ? 0.26 : 0.02)
+                    let third: Double = trigger.snap ? 0.01 : (closing ? 0.12 : 0.3)
+                    let fourth: Double = trigger.snap ? 0.01 : (closing ? 0.18 : 0.2)
+                    // A snappy spring asked to cover no distance still bounces.
+                    // Snap uses a dead spring so the pill is not rubber.
+                    let spring = trigger.snap ? Spring(duration: 0.01, bounce: 0) : .snappy
                     KeyframeTrack(\.y) {
-                        CubicKeyframe(CGFloat(rubberClosing ? 1.03 : 1), duration: 0.08)
-                        CubicKeyframe(CGFloat(1), duration: rubberClosing ? 0.26 : 0.02)
-                        SpringKeyframe(CGFloat(rubberClosing ? 0.973 : 1.016),
-                                       duration: rubberClosing ? 0.12 : 0.3)
-                        SpringKeyframe(CGFloat(1), duration: rubberClosing ? 0.18 : 0.2)
+                        CubicKeyframe(yPeak, duration: first)
+                        CubicKeyframe(CGFloat(1), duration: second)
+                        SpringKeyframe(yDip, duration: third, spring: spring)
+                        SpringKeyframe(CGFloat(1), duration: fourth, spring: spring)
                     }
                     KeyframeTrack(\.x) {
-                        CubicKeyframe(CGFloat(rubberClosing ? 0.99 : 1), duration: 0.08)
-                        CubicKeyframe(CGFloat(1), duration: rubberClosing ? 0.26 : 0.02)
-                        SpringKeyframe(CGFloat(1.008), duration: rubberClosing ? 0.12 : 0.3)
-                        SpringKeyframe(CGFloat(1), duration: rubberClosing ? 0.18 : 0.2)
+                        CubicKeyframe(xPinch, duration: first)
+                        CubicKeyframe(CGFloat(1), duration: second)
+                        SpringKeyframe(xOvershoot, duration: third, spring: spring)
+                        SpringKeyframe(CGFloat(1), duration: fourth, spring: spring)
                     }
                 }
             Spacer(minLength: 0)
@@ -270,10 +295,16 @@ struct NotchView: View {
             guard !reduceMotion, old != new else { return }
             let was = old == .peek || old == .panel
             let now = new == .peek || new == .panel
+            // Rubber only while the silhouette stays an Interaction. Opening
+            // peek, and panel back to peek, are that. Leaving onto an Event,
+            // an Activity, or idle (where Extension marks come back) snaps to
+            // rest instead of sucking the pill.
             guard was || now else { return }
-            // Panel back to peek is the same suck, just not all the way to idle.
-            rubberClosing = was && (!now || new == .peek)
-            rubberTick += 1
+            rubber = RubberTrigger(
+                tick: rubber.tick + 1,
+                closing: old == .panel && new == .peek,
+                snap: was && !now
+            )
         }
     }
 
