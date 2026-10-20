@@ -11,16 +11,10 @@ enum NotchState: Equatable {
 
     // MARK: Events
 
-    /// One Event owning the whole notch: glyph in one flank, its value in the
-    /// other. Only a centre Signal reaches this — everything with a side is
-    /// routed to `sided` before it gets here — and every centre Signal is
-    /// compact, so `compactPill` is the one thing that draws it.
+    /// A power Event owning the whole notch: glyph in one flank, its value in
+    /// the other — the only Signals that still present; heat glows instead.
+    /// `compactPill` draws it.
     case event(Event)
-    /// One Event per flank, each on the side its subsystem owns. They speak for
-    /// different subsystems, so neither has any reason to evict the other —
-    /// each side comes and goes on its own clock and either may be nil.
-    /// See `Signal.side`.
-    case sided(left: Event?, right: Event?)
     /// A Bluetooth accessory just connected: what it is, and how full it is.
     case accessory(Accessory)
     /// Sound just fell off a headset back onto the built-in speakers, carrying
@@ -35,6 +29,14 @@ enum NotchState: Equatable {
     /// A one-shot reported explicitly by `vitals-notify`, where the process
     /// knows its own outcome and Vitals does not have to infer one.
     case externalEvent(ExternalEvent)
+    /// The player moved to a new track on its own — not from the panel's prev
+    /// or next, and not while the panel was open. The cover in one flank, the
+    /// equaliser in the other; it says what changed, nothing more.
+    case trackChange(TrackChange)
+    /// The VPN came on (`minutesOn` nil), or has now been on for one of the
+    /// reminder marks. Said so a tunnel you forgot about does not route the
+    /// rest of your day; nothing is said when it goes off.
+    case vpn(VPNNotice)
 
     // MARK: Activity
 
@@ -46,11 +48,22 @@ enum NotchState: Equatable {
 
     // MARK: Interactions
 
-    /// Hover: the notch answers the pointer with the stats worth a glance.
-    case peek
-    /// Peek opened downward into a surface you can work in — the shelf, or the
-    /// numbers behind peek's one-line battery summary.
+    /// Hover: the one surface you reach into. The two stats in the flanks,
+    /// a summary column, and one slot — a feature page such as the shelf, or a
+    /// stat's numbers — one size for all of them, so nothing in it resizes it.
     case panel
+}
+
+/// One VPN pill: the connect (`minutesOn` nil) or a reminder at a mark.
+struct VPNNotice: Equatable {
+    var minutesOn: Int?
+
+    /// "30m", "1h", "4h" — the mark reached, not a running clock. The clock
+    /// glyph above it says what the number is.
+    var reminderText: String? {
+        guard let m = minutesOn else { return nil }
+        return m < 60 ? "\(m)m" : "\(m / 60)h"
+    }
 }
 
 /// What each side of a state buys. Separate numbers because a state whose two
@@ -69,6 +82,13 @@ struct NotchMetrics {
     /// display that has none. Only the corner radii care: they are calibrated
     /// against a real housing's height and a menu-bar-tall one is shorter.
     var synthetic = false
+    /// Screen points per layout point. Every number in here — `notch`
+    /// included — is in layout points, the size Vitals is drawn at on a real
+    /// housing; the view is scaled by this from the top centre on its way to
+    /// the screen. 1 on a real notch. A synthetic one is only menu-bar tall,
+    /// so its layout is a real-sized notch shrunk to fit, and the type, glyphs
+    /// and gaps shrink with it instead of crowding a shorter shape.
+    var scale: CGFloat = 1
     // Every flank below is its content's measured width plus `notchPad`, at the
     // point sizes that state actually draws at. Grow the number if the string or
     // the glyph that sets the ceiling changes.
@@ -84,18 +104,10 @@ struct NotchMetrics {
     /// and charging is gated under 95%. The widest glyph any of them draws is
     /// `battery.100percent.bolt` at 29pt, which fits inside that.
     var glyphFlank: CGFloat = 40
-    /// The sided pills fit a glyph *and* its value in one flank, so they need
-    /// more than a lone glyph does. Ceiling is the thermal pair at its hottest:
-    /// `thermometer.high` 12 + 4 + "100°" at 12pt, 32pt.
-    var sidedFlank: CGFloat = 52
-    /// Peek and generic reported Activities, the widest one-row family.
+    /// Tracked builds and generic reported Activities, the widest one-row
+    /// family.
     ///
-    /// Shared between those two states on purpose: peek can replace an Activity
-    /// under a resting pointer, and the shape must not resize under the cursor.
-    /// So each side here is the wider of what the two states ask of it, not what
-    /// either asks on its own.
-    ///
-    /// Ceiling is peek's "100%" beside its 20pt symbol box, 63pt. The heat side
+    /// Ceiling is a "100%" beside a 20pt symbol box, 63pt. The heat side
     /// measures a point under that — a degree sign is narrower than a percent.
     /// Both round to the same number: a lean that comes out of glyph widths is
     /// noise, not a layout, and the two sides are a matched pair.
@@ -104,7 +116,7 @@ struct NotchMetrics {
     /// so the pad is on top of that, not inside it.
     var statFlanks: Flanks = (64, 64)
     /// Untracked Xcode builds, finished Xcode builds and explicit command
-    /// verdicts. Tracked builds use `statFlanks` for their live counter.
+    /// verdicts, and the VPN pills. Tracked builds use `statFlanks` for their live counter.
     ///
     /// Ceiling is "Success" at 8pt, level with "Archive" and "Analyze" on the
     /// left and wider than either glyph. The other 18 is clearance, not padding:
@@ -112,15 +124,18 @@ struct NotchMetrics {
     /// is curving back in, and the outline takes 6–9pt of horizontal bite across
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
+    /// The panel. Wider than `statFlanks` because the paged slot below the
+    /// housing has to hold a readout's hero tile and its four rows beside the
+    /// summary column and both arrows; the flanks above simply hug inward.
+    var panelFlanks: Flanks = (82, 82)
     /// One outboard Extension: its mark, the hairline separating it from the
-    /// current state, and the gaps around both. Ceiling is the VPN badge, the
-    /// widest mark any Extension draws — ~25 with its box, against 17 for a
-    /// plain icon. The rest is outward slack, and it is not padding: the bottom
-    /// corner curves back in across the last few points of every flank, and a
-    /// bordered box is a shape whose edge shows the bite. 25 for the badge and
-    /// 13 of outward slack, because the bite is 6–9 and a bordered box shows
-    /// where it lands — this is the number that cannot be trimmed for looking
-    /// like air.
+    /// current state, and the gaps around both. Ceiling is now Claude's burst,
+    /// the widest mark any Extension draws — 20pt plus the 4pt it is pushed
+    /// outward, ~24, against 17 for a plain icon. (The VPN word badge used to
+    /// set it at ~25; VPN is a pill now, not a mark.) The rest is outward
+    /// slack, and it is not padding: the bottom corner curves back in across
+    /// the last few points of every flank, a bite of 6–9pt. Kept at 38 so the
+    /// burst clears it with the same margin the badge had.
     var extensionFlank: CGFloat = 38
     /// What the hairline and the air on both sides of it cost, bought only while
     /// the rule is actually drawn — on an idle notch the marks are all there is
@@ -131,6 +146,35 @@ struct NotchMetrics {
     /// One Extension slot's width in a given state, separator included when that
     /// state draws one. `NotchView` sizes the mark with this too, so the frame
     /// and the shape growth cannot disagree.
+    /// Builds the metrics for a measured notch, in screen points. Only a
+    /// synthetic notch scales: a real housing is what the layout was drawn
+    /// for. Calibrated against a 38pt housing — the same height the corner
+    /// radii are — and floored, because a 24pt menu bar would take the 12pt
+    /// readings below 8pt.
+    static func measured(_ notch: CGSize, synthetic: Bool) -> NotchMetrics {
+        let scale = synthetic ? max(0.75, min(1, notch.height / 38)) : 1
+        return NotchMetrics(notch: CGSize(width: notch.width / scale,
+                                          height: notch.height / scale),
+                            synthetic: synthetic, scale: scale)
+    }
+
+    /// The window, in screen points. Whole points: a scaled size comes out
+    /// fractional, AppKit rounds the frame, and the window's top lands a
+    /// sliver below the screen edge — invisible across the thick middle, a
+    /// clipped tip where each flare thins out to meet the edge.
+    var screenWindowSize: CGSize {
+        CGSize(width: (windowSize.width * scale).rounded(.up),
+               height: (windowSize.height * scale).rounded(.up))
+    }
+
+    /// The shape a state draws and how far it sits off centre, in screen
+    /// points — for hit regions the controller tests the pointer against.
+    func screenShape(for state: NotchState, extensions: ExtensionSlots) -> (size: CGSize, lean: CGFloat) {
+        let s = size(for: state, extensions: extensions)
+        return (CGSize(width: s.width * scale, height: s.height * scale),
+                lean(for: state, extensions: extensions) * scale)
+    }
+
     func extensionFlank(for state: NotchState) -> CGFloat {
         extensionFlank + (state == .idle ? 0 : extensionSeparatorFlank)
     }
@@ -142,7 +186,7 @@ struct NotchMetrics {
     /// Extensions accompany the horizontal resting, Activity and Event shapes.
     func visibleExtensions(_ state: NotchState, _ extensions: ExtensionSlots) -> ExtensionSlots {
         switch state {
-        case .peek, .panel: .empty
+        case .panel: .empty
         default: extensions
         }
     }
@@ -166,26 +210,18 @@ struct NotchMetrics {
         switch state {
         case .idle: (0, 0)
         // A centre Event is always compact — a glyph against one short value —
-        // so it buys the same flanks the accessory pill does.
-        case .event: (glyphFlank, glyphFlank)
-        // One flank per live side — see `Signal.side`. Nothing to say on the far
-        // flank means nothing is bought there, so the notch leans all the way
-        // and the lean is what says which subsystem is talking. A second side
-        // arriving buys the same width on its edge rather than resizing the
-        // first, and the shape is symmetric again.
-        case .sided(let left, let right):
-            (left == nil ? 0 : sidedFlank, right == nil ? 0 : sidedFlank)
-        case .accessory, .audioLost: (glyphFlank, glyphFlank)
-        case .verdict, .externalEvent: verdictFlanks
+        // so it buys the same flanks the accessory pill does. The track-change
+        // pill is a cover against bars, a glyph against a glyph.
+        case .event, .accessory, .audioLost, .trackChange: (glyphFlank, glyphFlank)
+        case .verdict, .externalEvent, .vpn: verdictFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
         case .building(let build):
             build.progress == nil ? verdictFlanks : statFlanks
         case .externalActivity: statFlanks
-        // The panel is peek opened further — it only drops the shelf down and
-        // never widens the shape under the pointer. Its body needs ~215pt for
-        // the AirDrop tile and shelf, which these flanks already clear.
-        case .peek, .panel: statFlanks
+        // Paging swaps the slot, never the shape — these flanks are sized for
+        // the widest slot: summary column, both arrows, a hero tile and rows.
+        case .panel: panelFlanks
         }
     }
 
@@ -208,16 +244,12 @@ struct NotchMetrics {
         return CGSize(width: notch.width + f.left + f.right, height: height(for: state))
     }
 
-    /// Height is what separates the categories on sight, so only the two
-    /// Interactions are allowed to use it.
+    /// Height is what separates the categories on sight, so only the
+    /// Interaction is allowed to use it.
     private func height(for state: NotchState) -> CGFloat {
         switch state {
-        // Twice the notch — enough to read as "it noticed you" without claiming
-        // the screen the way the panel does.
-        case .peek:  notch.height * 2
-        // The only state that grows past two rows. Roughly the three notch
-        // heights `design.md` asks for — `panelBodyHeight` is what the AirDrop
-        // tile and the shelf actually need, and that runs a little over.
+        // The only state that grows past one row: the housing row plus the
+        // body — summary column, paged slot and its dots.
         case .panel: notch.height + panelBodyHeight
         default:     notch.height
         }
@@ -227,13 +259,14 @@ struct NotchMetrics {
     /// it. The slack has to cover the shape's top flare on both sides, the lean
     /// of the widest uneven state, *and* the ambient shadow past all of it —
     /// radius 24 blurs ~36pt out, plus its 12pt drop.
-    /// `statFlanks` is the widest pair any state buys — peek, the panel and the
-    /// running build all sit on it, and every other family is narrower.
-    /// Both Extension slots are reserved whether or not they are active: the
-    /// window's frame is set once, while conditions can change afterwards.
+    /// The widest shape is either the panel or a `statFlanks` Activity with
+    /// both Extension slots up. Both slots are reserved whether or not they are
+    /// active: the window's frame is set once, while conditions can change
+    /// afterwards.
     var windowSize: CGSize {
         let slot = extensionFlank + extensionSeparatorFlank
-        let widest = notch.width + statFlanks.left + statFlanks.right + slot * 2
+        let widest = notch.width + max(statFlanks.left + statFlanks.right + slot * 2,
+                                       panelFlanks.left + panelFlanks.right)
         return CGSize(width: widest + 160, height: notch.height + panelBodyHeight + 72)
     }
 }

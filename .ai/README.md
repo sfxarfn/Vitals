@@ -66,10 +66,10 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | File | Role |
 |---|---|
 | [`Telemetry.swift`](../Vitals/Events/Telemetry.swift) | Power, die temperature, CPU load and the network link. Push where macOS offers it, poll only CPU. |
-| [`EventEngine.swift`](../Vitals/Events/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. `Signal` is one case per Event `product.md` lists under Power, Thermal and CPU — nothing else. Owns `Loudness` (pill or glow) and `Side`. Pure value type; has a `DEBUG` self-check. |
+| [`EventEngine.swift`](../Vitals/Events/EventEngine.swift) | Readings → signals, with hysteresis and a cooldown. `Signal` is one case per Event under Power and Thermal — nothing else; CPU has no Signal. Only power presents: heat is glow-only at every level, lighting both edges tinted by level (critical red). Owns `Loudness` (pill or glow). Pure value type; has a `DEBUG` self-check. |
 | [`Accessory.swift`](../Vitals/Events/Accessory.swift) | Bluetooth accessory connect detection and battery. |
-| [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: sided, compact, accessory, audio lost. |
-| [`VerdictPill.swift`](../Vitals/Events/VerdictPill.swift) | How a finished build draws. An Event, not the tail of the Activity — the build has handed the notch back before this queues. |
+| [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: compact (power), accessory, audio lost, command events, the track change (cover + equaliser) and the VPN pills — glyph-over-caption stacks. Heat has no pill; it glows. |
+| [`VerdictPill.swift`](../Vitals/Events/VerdictPill.swift) | How a finished build draws. An Event, not the tail of the Activity — the build has handed the notch back before this queues. The controller files Xcode's `xcode-build-succeeded/failed` Behavior events as this. |
 | [`../Vitals/Commands/CommandReceiver.swift`](../Vitals/Commands/CommandReceiver.swift) | The local, versioned protocol behind `vitals-notify`, plus the explicit Event and Activity models it accepts. |
 
 ### `Activities/` — work you started
@@ -84,18 +84,20 @@ belongs to — if it fits none of them, it does not belong in the notch.
 
 | File | Role |
 |---|---|
-| [`PeekView.swift`](../Vitals/Interactions/PeekView.swift) | Peek: the two stat flanks and the row of controls under them. |
-| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel: `PanelBody` and its one body slot, the back button, the shelf and the AirDrop tile. |
-| [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers, shared by both Interactions so the wording cannot drift. |
+| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel — what hover opens: the two stat flanks, the summary column, `PanelPage`'s feature pages behind two arrows and the dots (hidden while Shelf is the only one), the `PanelDetail` readouts the stats open over them, the shelf and the AirDrop strip. |
+| [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers: the summary column's value ("AC" on wall power) and the battery page. |
 | [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — throttle headroom, memory, and whichever temperatures the chip is willing to name (M1 splits its die three ways; M2/M3 do not). |
 | [`NetworkReadout.swift`](../Vitals/Interactions/NetworkReadout.swift) | The link, same way: peek's two rates opened into what carries them — link rate, signal, band and channel, and whether a VPN has it. Names the interface, never the network: the SSID costs a Location prompt. |
 | [`Shelf.swift`](../Vitals/Interactions/Shelf.swift) | The drop box and the AirDrop plumbing. |
+| [`NowPlaying.swift`](../Vitals/Interactions/NowPlaying.swift) | Now Playing, read through ungive/mediaremote-adapter: Apple-signed `/usr/bin/perl` still holds the MediaRemote entitlement third-party apps lost in macOS 15.4. One stream for the life of the app (measured: idle perl at 0% CPU, ~33 MB), which also feeds the track-change pill; Music and Spotify over `osascript` if the adapter keeps dying. |
+| [`NowPlayingPage.swift`](../Vitals/Interactions/NowPlayingPage.swift) | The panel's second feature page: artwork (click opens the player), title, artist, a progress hairline and the transport buttons. |
+| [`MediaRemoteAdapter/`](../Vitals/Interactions/MediaRemoteAdapter) | The vendored adapter (BSD 3-Clause, licence beside it). The library ships zipped and is unpacked into Caches at runtime — Xcode recognises a Mach-O by its contents and links it whatever its extension, which made dyld abort at launch; rebuild it with [`tools/build-mediaremote-adapter.sh`](../tools/build-mediaremote-adapter.sh). |
 
 ### `Extensions/` — concurrent conditions
 
 | File | Role |
 |---|---|
-| [`NotchExtension.swift`](../Vitals/Extensions/NotchExtension.swift) | An explicitly or telemetrically owned lifecycle, plus the activation-order allocator that gives the oldest condition the right slot and the next one the left. |
+| [`NotchExtension.swift`](../Vitals/Extensions/NotchExtension.swift) | An explicitly reported lifecycle (today: Claude), plus the activation-order allocator that gives the oldest condition the right slot and the next one the left. VPN is no longer an Extension — it is the `.vpn` Event pill and a badge on the panel's network tile. |
 
 [`VitalsApp.swift`](../Vitals/VitalsApp.swift) sits at the root: `@main`, the
 accessory-policy app, the Settings scene, and the debug self-checks.

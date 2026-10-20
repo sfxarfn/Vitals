@@ -8,11 +8,7 @@ import SwiftUI
 /// minutes, however bad it is.
 enum Loudness { case glow, pill }
 
-/// Which side of the notch an Event owns. Centre spreads one message across
-/// both flanks; the others grow one edge only. See `Signal.side`.
-enum Side { case center, left, right }
-
-/// A flattened view of telemetry. Power and CPU are numbers with thresholds;
+/// A flattened view of telemetry. Power is numbers with thresholds;
 /// thermal pressure is macOS's own state machine, because its transitions carry
 /// meaning that a temperature threshold cannot reproduce.
 struct Reading {
@@ -21,33 +17,29 @@ struct Reading {
     /// Signed: positive is current going into the pack, negative is coming out.
     var batteryWatts = 0.0
     var thermalState: ProcessInfo.ThermalState = .nominal
-    var cpuSustainedSeconds = 0.0
 }
 
-/// Everything the machine can say about itself, one case per Event `product.md`
-/// lists under Power, Thermal and CPU. The other two subsystems it lists —
+/// Everything the machine can say about itself, one case per Event under Power
+/// and Thermal. CPU has none: sustained load once lit an edge of its own, but on
+/// a fanless chip it is the heat, so the thermal glow already says it. The other two subsystems it lists —
 /// Connections and Xcode — do not read off telemetry, so they arrive as their
 /// own `NotchState` rather than through here.
 ///
-/// `loudness` says whether a signal earns a pill or only an edge; `side` says
-/// which edge.
+/// `loudness` says whether a signal earns a pill or only lights the edges.
 enum Signal: String, CaseIterable {
     // Power.
     case chargingStarted, charged
     // Thermal — macOS's fair, serious and critical pressure levels.
     case thermalWarm, thermalSerious, thermalCritical
-    // CPU: sustained load is machine state. Completion belongs to the process
-    // that knows what it was doing and arrives through `vitals-notify`.
-    case cpuSustained
 
-    /// Only crossings worth acting on earn a pill. Fair thermal pressure and
-    /// sustained CPU load can hold for a long time, so they light an edge rather
-    /// than occupying the notch for the life of the condition.
+    /// Power crossings earn a pill. Heat never does, at any level: the edge
+    /// glow lights both sides for as long as the pressure holds and darkens
+    /// with it, tinted by how bad it is — a pill on top of that was the same
+    /// news said twice.
     var loudness: Loudness {
         switch self {
-        case .chargingStarted, .charged,
-             .thermalSerious, .thermalCritical: .pill
-        case .thermalWarm, .cpuSustained:     .glow
+        case .chargingStarted, .charged: .pill
+        case .thermalWarm, .thermalSerious, .thermalCritical: .glow
         }
     }
 
@@ -67,7 +59,6 @@ enum Signal: String, CaseIterable {
         case .thermalWarm:          (0.5, 0.5)
         case .thermalSerious:       (1.5, 1.5)
         case .thermalCritical:      (2.5, 2.5)
-        case .cpuSustained:         (60, 30)
         }
     }
 
@@ -89,7 +80,6 @@ enum Signal: String, CaseIterable {
         case .thermalWarm,
              .thermalSerious,
              .thermalCritical:      Self.thermalLevel(r.thermalState)
-        case .cpuSustained:         r.cpuSustainedSeconds
         }
     }
 
@@ -112,7 +102,6 @@ enum Signal: String, CaseIterable {
         case .thermalSerious:       "thermometer.high"
         case .thermalCritical:      "thermometer.high"
         case .thermalWarm:          "thermometer.medium"
-        case .cpuSustained:         "cpu"
         }
     }
 
@@ -123,7 +112,6 @@ enum Signal: String, CaseIterable {
         case .thermalSerious:       "Thermal caution"
         case .thermalCritical:      "Throttling active"
         case .thermalWarm:          "Warm"
-        case .cpuSustained:         "CPU pegged"
         }
     }
 
@@ -135,72 +123,24 @@ enum Signal: String, CaseIterable {
         case .chargingStarted:              .orange
         case .charged:                      .green
         case .thermalCritical:              .red
-        case .thermalWarm, .thermalSerious,
-             .cpuSustained:                 .orange
+        case .thermalWarm, .thermalSerious: .orange
         }
     }
 
-    /// What the edge glows, which is not always what the signal is tinted. Heat
-    /// glows orange at every level: the edge sits in peripheral vision, where
-    /// red reads as an alarm you have to act on — and a die at 90° through a
-    /// long build is a fact, not an emergency. Red stays where you went looking
-    /// for it, on the glyph and the pill.
-    var glowTint: Color { self == .thermalCritical ? .orange : tint }
+    /// What the edge glows: its level's tint. With no thermal pill any more the
+    /// glow is the whole message, so critical is red there — the one heat
+    /// state that is an emergency rather than a fact.
+    var glowTint: Color { tint }
 
-    // MARK: How it presents
-
-    /// Says everything in a glyph and one number, so it wears the accessory
-    /// pill's width and layout instead of the full event pill's — the number
-    /// carries more than the word would ("48°", not "Cooling down").
-    var isCompact: Bool {
-        switch self {
-        case .chargingStarted, .charged: true
-        default: false
-        }
-    }
-
-    /// Which way the pill grows. Centre is the default and splits its message
-    /// across the two flanks. A one-sided pill has only one thing to say — a
-    /// glyph and at most one number — so a symmetric shape would spend the far
-    /// flank on nothing and the notch sliding both ways would read louder than
-    /// the news is. Side is identity, not decoration: heat is always the left
-    /// edge and load always the right, glow included, so a glance at which edge
-    /// moved already says which subsystem is talking.
-    var side: Side {
-        switch self {
-        case .thermalWarm, .thermalSerious, .thermalCritical: .left
-        case .cpuSustained:                 .right
-        case .chargingStarted, .charged:    .center
-        }
-    }
-
-    // MARK: Recovery
-
-    var recoverySymbol: String {
-        switch self {
-        case .thermalSerious, .thermalCritical: "thermometer.low"
-        default:              symbol
-        }
-    }
-
-    var recoveryTitle: String {
-        switch self {
-        case .thermalSerious, .thermalCritical: "Cooling down"
-        default:              title
-        }
-    }
 }
 
-/// One presentation. `recovered` inverts the polarity: a condition returned to
-/// its all-clear, which is the same signal saying the opposite thing, so it gets
-/// its own word and glyph instead of its own case.
+/// One presentation of a Signal that earns a pill.
 struct Event: Equatable {
     var signal: Signal
-    var recovered = false
 
-    var symbol: String { recovered ? signal.recoverySymbol : signal.symbol }
-    var title: String { recovered ? signal.recoveryTitle : signal.title }
-    var tint: Color { recovered ? .green : signal.tint }
+    var symbol: String { signal.symbol }
+    var title: String { signal.title }
+    var tint: Color { signal.tint }
 }
 
 // MARK: - Engine
@@ -212,10 +152,6 @@ struct EventEngine {
 
     private(set) var active: Set<Signal> = []
     private var lastFired: [Signal: Date] = [:]
-    /// The most severe thermal Event that actually reached the notch. Recovery
-    /// is only news if the problem was presented, and only nominal pays this debt.
-    private var thermalRecovery: Signal?
-    private var previousThermalState: ProcessInfo.ThermalState?
     private var primed = false
 
     /// Returns the Events that should be presented on this tick.
@@ -228,7 +164,6 @@ struct EventEngine {
         if !primed {
             primed = true
             active = Set(Signal.allCases.filter { $0.value(r) > $0.thresholds.assertAbove })
-            previousThermalState = r.thermalState
             return []
         }
 
@@ -248,47 +183,12 @@ struct EventEngine {
                 fired.append(Event(signal: s))
             }
         }
-        fired.append(contentsOf: updateThermal(r.thermalState, now: now))
+        setThermalActive(r.thermalState)
         return fired
     }
 
-    /// macOS already debounces thermal pressure. Keep its four states intact so
-    /// descending through serious and fair cannot masquerade as recovery, and a
-    /// direct jump to critical does not queue a lesser Caution first.
-    private mutating func updateThermal(_ state: ProcessInfo.ThermalState, now: Date) -> [Event] {
-        let previous = previousThermalState
-        previousThermalState = state
-        setThermalActive(state)
-
-        switch state {
-        case .nominal:
-            guard let owed = thermalRecovery else { return [] }
-            thermalRecovery = nil
-            return [Event(signal: owed, recovered: true)]
-
-        case .fair:
-            return []
-
-        case .serious:
-            guard thermalRank(previous) < thermalRank(state) else { return [] }
-            return fireThermal(.thermalSerious, now: now)
-
-        case .critical:
-            guard thermalRank(previous) < thermalRank(state) else { return [] }
-            return fireThermal(.thermalCritical, now: now)
-
-        @unknown default:
-            return []
-        }
-    }
-
-    private mutating func fireThermal(_ signal: Signal, now: Date) -> [Event] {
-        if let last = lastFired[signal], now.timeIntervalSince(last) < Self.cooldown { return [] }
-        lastFired[signal] = now
-        thermalRecovery = signal
-        return [Event(signal: signal)]
-    }
-
+    /// macOS already debounces thermal pressure, so its state is taken as is:
+    /// each level lights the edges, nothing is announced.
     private mutating func setThermalActive(_ state: ProcessInfo.ThermalState) {
         active.subtract([.thermalWarm, .thermalSerious, .thermalCritical])
         switch state {
@@ -305,29 +205,10 @@ struct EventEngine {
         }
     }
 
-    private func thermalRank(_ state: ProcessInfo.ThermalState?) -> Int {
-        guard let state else { return -1 }
-        switch state {
-        case .nominal:  return 0
-        case .fair:     return 1
-        case .serious:  return 2
-        case .critical: return 3
-        @unknown default: return -1
-        }
-    }
-
     // MARK: Glow
 
-    /// The residue an Event leaves behind. The pill announces the crossing and
-    /// goes; while the condition under it is still true the edge nearest that
-    /// subsystem stays lit, until its all-clear. One edge each, on the same side
-    /// as the stat peek shows for it — heat left, load right — so a side always
-    /// means one thing.
-    var cpuGlow: Signal? { active.contains(.cpuSustained) ? .cpuSustained : nil }
-
-    /// Fair begins the orange edge. Serious keeps it and earns a Caution;
-    /// critical keeps the same orange edge but carries red in its one-shot Event
-    /// and peek glyph. Only nominal turns the edge dark.
+    /// Heat, on both edges, for as long as macOS says the pressure holds: fair
+    /// and serious glow orange, critical red. Only nominal turns them dark.
     var thermalGlow: Signal? {
         if active.contains(.thermalCritical) { return .thermalCritical }
         if active.contains(.thermalSerious) { return .thermalSerious }
@@ -412,60 +293,32 @@ enum EventEngineSelfCheck {
 
         // MARK: Hysteresis
 
-        // CPU sustained holds between 30s and 60s.
+        // Charged holds between 98% and 99.5%.
         var h = primed()
-        assert(h.update(Reading(cpuSustainedSeconds: 61), now: t0) == [])          // glow only, never fires
-        assert(h.active.contains(.cpuSustained))
-        _ = h.update(Reading(cpuSustainedSeconds: 45), now: t0)
-        assert(h.active.contains(.cpuSustained), "must not clear inside the hysteresis band")
-        _ = h.update(Reading(cpuSustainedSeconds: 10), now: t0)
-        assert(!h.active.contains(.cpuSustained))
-
-        // A glow-only signal that clears announces nothing, recovery or otherwise.
-        _ = h.update(Reading(cpuSustainedSeconds: 61), now: t0)
-        assert(h.update(Reading(cpuSustainedSeconds: 0), now: t0).isEmpty)
+        _ = h.update(Reading(percent: 100), now: t0)
+        assert(h.active.contains(.charged))
+        _ = h.update(Reading(percent: 99), now: t0)
+        assert(h.active.contains(.charged), "must not clear inside the hysteresis band")
+        _ = h.update(Reading(percent: 97), now: t0)
+        assert(!h.active.contains(.charged))
 
         // MARK: Thermal state
 
-        // Fair starts the orange edge silently. Serious announces Caution, and
-        // critical announces the red throttling Event without turning the
-        // persistent edge red.
+        // Heat never presents, at any level or on any transition — the glow
+        // carries it, and follows the state both ways.
         var g = primed()
-        assert(g.update(Reading(thermalState: .fair), now: t0).isEmpty)
-        assert(g.thermalGlow == .thermalWarm)
-        assert(g.update(Reading(thermalState: .serious), now: t0) == [Event(signal: .thermalSerious)])
-        assert(g.thermalGlow == .thermalSerious)
-        assert(Signal.thermalSerious.tint == .orange)
-        assert(g.update(Reading(thermalState: .critical), now: t0) == [Event(signal: .thermalCritical)])
+        for state: ProcessInfo.ThermalState in [.fair, .serious, .critical, .serious, .fair, .nominal, .critical] {
+            assert(g.update(Reading(thermalState: state), now: t0).isEmpty, "heat is glow-only")
+        }
         assert(g.thermalGlow == .thermalCritical)
-        assert(Signal.thermalCritical.tint == .red)
-        assert(Signal.thermalCritical.glowTint == .orange, "the persistent edge never goes red")
-
-        // Descending is not recovery while any pressure remains. Nominal turns
-        // the edge dark and pays exactly the latest severe Event's recovery.
-        assert(g.update(Reading(thermalState: .serious), now: t0).isEmpty)
+        assert(Signal.thermalCritical.glowTint == .red, "critical is the one red edge")
+        _ = g.update(Reading(thermalState: .serious), now: t0)
         assert(g.thermalGlow == .thermalSerious)
-        assert(g.update(Reading(thermalState: .fair), now: t0).isEmpty)
+        assert(Signal.thermalSerious.glowTint == .orange)
+        _ = g.update(Reading(thermalState: .fair), now: t0)
         assert(g.thermalGlow == .thermalWarm)
-        assert(g.update(Reading(thermalState: .nominal), now: t0)
-               == [Event(signal: .thermalCritical, recovered: true)],
-               "only nominal announces the all-clear, and once")
+        _ = g.update(Reading(thermalState: .nominal), now: t0)
         assert(g.thermalGlow == nil)
-        assert(g.update(Reading(thermalState: .nominal), now: t0).isEmpty)
-
-        // A jump straight to critical emits only the critical Event, not a
-        // lesser Caution first.
-        var j = primed()
-        assert(j.update(Reading(thermalState: .critical), now: t0)
-               == [Event(signal: .thermalCritical)])
-
-        // A whole episode inside the cooldown is silent both ways: the pill is
-        // suppressed, and so is the all-clear behind it, since there was no new
-        // presentation to recover from.
-        assert(g.update(Reading(thermalState: .critical), now: t0.addingTimeInterval(1)).isEmpty,
-               "cooldown must suppress re-fire")
-        assert(g.update(Reading(thermalState: .nominal), now: t0.addingTimeInterval(2)).isEmpty,
-               "no all-clear for a pill that never showed")
 
         print("EventEngine self-check passed")
     }

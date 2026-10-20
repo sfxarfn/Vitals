@@ -51,7 +51,8 @@ struct ExternalEvent: Equatable {
     var outcome: String { words.count > 1 ? (words.last ?? "Done") : (words.first ?? "Done") }
     var subjectSymbol: String { ExternalActivity.symbol(for: subject) }
 
-    private var isFailure: Bool {
+    /// Read by the controller too, to file Xcode's failed builds as a verdict.
+    var isFailure: Bool {
         ["failed", "failure", "error", "cancelled", "canceled"].contains(outcome.lowercased())
     }
     private var isWarning: Bool {

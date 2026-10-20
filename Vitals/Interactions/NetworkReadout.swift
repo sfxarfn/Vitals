@@ -1,18 +1,18 @@
 import SwiftUI
 
-/// The link in numbers: peek's two rates opened up into what is carrying them.
+/// The link in numbers: the summary column's download rate opened up into what
+/// is carrying it.
 /// The rates alone say the network is slow; the rows behind them say whether
 /// that is the link, the signal, or nothing to do with the radio at all.
 ///
-/// Takes the shelf row's slot and its 104pt tile, exactly as `batteryPanel` and
-/// `thermalPanel` do, so the swap reads as the row changing its mind rather than
-/// the panel resizing under the pointer.
+/// A detail in the panel's slot, with the same 96pt hero tile and four rows as
+/// `batteryPanel` and `thermalPanel`.
 extension NotchView {
 
     // MARK: The panel's numbers
 
     var networkPanel: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             // Down takes the middle for the same reason the die does on the
             // thermal tile: it is the number the panel was opened for. Up is
             // pushed to the bottom edge as its counterpart, not stacked under it.
@@ -23,14 +23,14 @@ extension NotchView {
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 2)
                 Text(rate(telemetry.net.down))
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                     .lineLimit(1).minimumScaleFactor(0.6)
                 Spacer(minLength: 2)
                 // The arrow is the only thing marking this one as the other
                 // direction, so it stays glued to its number rather than taking
-                // the fixed box peek's stacked pair needs to line two rows up.
+                // a fixed box to line up with anything.
                 HStack(spacing: 3) {
                     Image(systemName: "arrow.up").font(.system(size: 8, weight: .bold))
                     Text(rate(telemetry.net.up)).monospacedDigit()
@@ -40,7 +40,7 @@ extension NotchView {
                 .lineLimit(1).minimumScaleFactor(0.7)
             }
             .padding(.vertical, 8)
-            .frame(width: 104).frame(maxHeight: .infinity)
+            .frame(width: 96).frame(maxHeight: .infinity)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
 
             VStack(spacing: 5) {
@@ -53,7 +53,7 @@ extension NotchView {
                          tint: telemetry.net.vpn ? .green : .white.opacity(0.45))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
         }
     }
@@ -103,8 +103,8 @@ extension NotchView {
         }
     }
 
-    /// Peek's own formatter, so the panel and the two lines that led here cannot
-    /// round the same rate two different ways.
+    /// The shared formatter, so this detail and the summary column cannot round
+    /// the same rate two different ways.
     private func rate(_ bytesPerSecond: Double) -> String {
         Self.rateFormatter.string(fromByteCount: Int64(max(bytesPerSecond, 0))) + "/s"
     }

@@ -40,38 +40,6 @@ extension NotchView {
         .frame(height: metrics.notch.height)
     }
 
-    // MARK: Sided
-
-    /// One Event per live flank, with the notch's own width between them. A
-    /// missing side contributes nothing at all — the shape is already narrower
-    /// by that flank, so an empty spacer there would push the live one across
-    /// the camera housing.
-    func sidedPill(_ left: Event?, _ right: Event?) -> some View {
-        HStack(spacing: 0) {
-            if let left { flank(left, .leading) }
-            Spacer(minLength: 0).frame(width: metrics.notch.width)
-            if let right { flank(right, .trailing) }
-        }
-        .frame(height: metrics.notch.height)
-    }
-
-    /// One Event in one flank, `side` being the side of the notch it owns.
-    /// Everything sits in a single 15/12 pair rather than the compact pill's
-    /// 17/12, because here the glyph and its value share a flank instead of
-    /// owning one each.
-    private func flank(_ event: Event, _ side: HorizontalEdge) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: event.symbol).foregroundStyle(event.tint)
-            Text(compactValue(event))
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.7)
-                .foregroundStyle(.white)
-        }
-        .font(.system(size: 15, weight: .medium))
-        .flankSlot(metrics.sidedFlank, side, pad: metrics.notchPad)
-    }
-
     // MARK: Centre
 
     /// Same two-flank shape as the accessory pill: tinted glyph on the left, a
@@ -108,15 +76,10 @@ extension NotchView {
         .frame(height: metrics.notch.height)
     }
 
-    /// Falls back to the word when the sensor tree gave us nothing — a thermal
-    /// pill with an empty flank would look broken rather than quiet.
+    /// The pack's level — the only centre Events left are power ones; heat
+    /// glows instead of presenting.
     private func compactValue(_ event: Event) -> String {
-        switch event.signal {
-        case .thermalSerious, .thermalCritical:
-            telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? event.title
-        default:
-            batteryValue
-        }
+        batteryValue
     }
 
     // MARK: Connections
@@ -156,6 +119,72 @@ extension NotchView {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 .frame(width: 11, height: 18)
         }
+    }
+
+    // MARK: New in this pass, drawn the old way
+
+    /// A new track: the cover hugging the housing on the left, the equaliser
+    /// in the cover's colour on the right. Two glyphs, like the accessory pill.
+    func trackChangePill(_ change: TrackChange) -> some View {
+        HStack(spacing: 0) {
+            Group {
+                if let artwork = change.artwork {
+                    Image(nsImage: artwork)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    // The cover can trail the title by a beat; a note holds its
+                    // place rather than leaving the flank empty.
+                    Image(systemName: "music.note")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.white.opacity(0.12))
+                }
+            }
+            .frame(width: 22, height: 22)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .flankSlot(metrics.glyphFlank, .leading, pad: metrics.notchPad)
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            // 9pt of bars against a 22pt cover: centred, like the accessory
+            // pill's lone Bluetooth mark, so the narrow side does not read as
+            // having slid inward and left its flank empty.
+            EqualizerBars(playing: true, reduceMotion: reduceMotion, tint: change.tint ?? .white)
+                .scaleEffect(1.4)
+                .flankSlot(metrics.glyphFlank, .trailing, pad: metrics.notchPad, centered: true)
+        }
+        .frame(height: metrics.notch.height)
+    }
+
+    /// The VPN came on, or has been on a while: the same two stacks as a
+    /// command Event — an orange lock over "VPN" on the left, and a globe over
+    /// "Connected" or a clock over the mark ("30m", "1h") on the right.
+    func vpnPill(_ notice: VPNNotice) -> some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 1) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.orange)
+                    .frame(height: 20)
+                Text("VPN")
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+            .flankSlot(metrics.verdictFlanks.left, .leading, pad: metrics.notchPad, centered: true)
+            Spacer(minLength: 0).frame(width: metrics.notch.width)
+            VStack(spacing: 1) {
+                Image(systemName: notice.minutesOn == nil ? "globe" : "clock")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(height: 20)
+                Text(notice.reminderText ?? "Connected")
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .foregroundStyle(.white)
+            }
+            .flankSlot(metrics.verdictFlanks.right, .trailing, pad: metrics.notchPad, centered: true)
+        }
+        .frame(height: metrics.notch.height)
     }
 
     func audioLostPill(_ loudness: Double) -> some View {

@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// The die in numbers: peek's one rounded degree opened up into where the heat
+/// The die in numbers: the left flank's rounded degree opened up into where the heat
 /// actually sits and how much room is left before the machine starts paying for
 /// it in clocks. Fanless is this machine's whole problem, so the left flank gets
-/// the same treatment the battery line has — a summary you can click through.
+/// the same treatment the battery tile has — a summary you can click through.
 ///
-/// Takes the shelf row's slot and its 104pt tile, exactly as `batteryPanel`
-/// does, so the swap reads as the row changing its mind rather than the panel
-/// resizing under the pointer.
+/// A detail in the panel's slot, with the same 96pt hero tile and four rows as
+/// `batteryPanel` and `networkPanel`.
 extension NotchView {
 
     /// Where this machine starts trading clocks for heat. There is no API for
@@ -30,7 +29,7 @@ extension NotchView {
         return String(cString: buf).trimmingCharacters(in: .whitespaces)
     }()
 
-    // MARK: Peek's summary
+    // MARK: The flank's summary
 
     /// A machine whose sensor tree we cannot read gets a dash, not a zero — 0°
     /// is a plausible-looking temperature and reads as a working sensor.
@@ -38,7 +37,7 @@ extension NotchView {
         telemetry.stall.tempC.map { "\(Int($0.rounded()))°" } ?? "—"
     }
 
-    /// The same macOS thermal-pressure state the left edge follows: nominal is
+    /// The same macOS thermal-pressure state the edge glow follows: nominal is
     /// green, fair and serious are orange, and critical is red. Shared with the
     /// panel below, so clicking through cannot change the colour of the number
     /// you clicked.
@@ -50,7 +49,7 @@ extension NotchView {
     // MARK: The panel's numbers
 
     var thermalPanel: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             // The chip's name and the headroom line are pushed to the tile's two
             // edges rather than stacked around the degree, so the number the
             // panel exists for takes the whole middle instead of a third of it.
@@ -60,11 +59,11 @@ extension NotchView {
                     .foregroundStyle(.white.opacity(0.5))
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 2)
-                // A decimal here and nowhere else: peek rounds because it has one
-                // flank, and the whole reason to open this is that the rounded
+                // A decimal here and nowhere else: the flank rounds because it has
+                // one short slot, and the whole reason to open this is that the rounded
                 // number stopped being enough.
                 Text(telemetry.stall.tempC.map { String(format: "%.1f°", $0) } ?? "—")
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(tempTint)
                     .lineLimit(1).minimumScaleFactor(0.7)
@@ -75,21 +74,21 @@ extension NotchView {
                     .lineLimit(1).minimumScaleFactor(0.8)
             }
             .padding(.vertical, 8)
-            .frame(width: 104).frame(maxHeight: .infinity)
+            .frame(width: 96).frame(maxHeight: .infinity)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
 
             VStack(spacing: 5) {
                 ForEach(rows) { statLine($0.label, $0.value, tint: $0.tint) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
         }
     }
 
     // MARK: Wording
 
-    /// The second line, and the one thing peek cannot say. Degrees left is a
+    /// The second line, and the one thing the flank cannot say. Degrees left is a
     /// guess against a calibrated ceiling, so it is only honest while macOS
     /// agrees nothing is happening — the moment `thermalState` leaves nominal
     /// the margin is no longer a margin, and the state itself is the news.
@@ -142,7 +141,7 @@ extension NotchView {
     }
 
     /// A block whose sensors did not answer gets a dash, the same way a machine
-    /// with no readable tree does in peek — a 0.0° row reads as a cold GPU.
+    /// with no readable tree does in the flank — a 0.0° row reads as a cold GPU.
     private func degrees(_ group: SensorGroup) -> String {
         telemetry.stall.dieGroups[group].map { String(format: "%.1f°", $0) } ?? "—"
     }

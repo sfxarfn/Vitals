@@ -73,8 +73,8 @@ enum DragboardFiles {
     }
 }
 
-/// Location plus the drop. `dropDestination` only reports the point once the
-/// file has landed, which is too late for the silhouette to follow the pointer.
+/// Targeting plus the drop and where it landed, for the ripple. The location
+/// on move is not used — nothing follows the pointer while it is in the panel.
 struct ShelfFileDrop: DropDelegate {
     var onMove: (CGPoint) -> Void
     var onExit: () -> Void
@@ -135,17 +135,8 @@ func shelfDropHaptic() {
 // MARK: Landing
 
 extension NotchView {
-    func followDrag(_ point: CGPoint) {
-        guard !reduceMotion else { return }
-        let width = max(metrics.baseSize(for: .panel).width, 1)
-        let raw = max(-1, min(1, (point.x / width - 0.5) * 2))
-        let stepped = (raw * 32).rounded() / 32
-        if stepped != dragLean { dragLean = stepped }
-    }
-
     func releaseDragAim() {
         shelfTargeted = false
-        dragLean = 0
         // Button still down: the drag moved to another target or off the panel,
         // and the drag cursor has to stay. Button up: it was cancelled over the
         // panel, and the global monitor will not see that mouse-up.
@@ -173,7 +164,7 @@ extension NotchView {
         // ripple, and fresh-chip arrival do not — writing them here is what
         // replays the landing the next time the shelf opens.
         guard panelIsLive else { return true }
-        panelBody = .shelf
+        showShelf()
         NotchController.shared?.fileDragEnded()
         // A duplicate still caught the file; it just has nothing new to settle.
         shelfDropHaptic()
@@ -229,27 +220,15 @@ extension NotchView {
             NotchController.shared?.fileDragEnded()
             switch operation {
             case .cancel, .forbidden:
-                withAnimation(shelfPop) {
-                    liftingURL = nil
-                    liftTilt = 0
-                    liftSample = nil
-                }
+                withAnimation(shelfPop) { liftingURL = nil }
             default:
                 withAnimation(shelfPop) { shelf.remove(url) }
                 liftingURL = nil
-                liftTilt = 0
-                liftSample = nil
             }
             return
         }
-        let previous = liftSample ?? session.location
-        liftSample = session.location
         if liftingURL != url { liftingURL = url }
         NotchController.shared?.setDraggingFile(true)
-        guard !reduceMotion else { return }
-        let dx = session.location.x - previous.x
-        let stepped = (max(-9, min(9, Double(dx) * 0.55)) * 2).rounded() / 2
-        if stepped != liftTilt { liftTilt = stepped }
     }
 }
 
@@ -289,13 +268,10 @@ struct ShelfRipple: View {
 /// so the row makes room instead of jumping when the file arrives.
 struct ShelfGhost: View {
     var body: some View {
+        // Filled, no dashes: the box around it already says "drop here", a
+        // second dashed outline inside it was one ring too many.
         RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(Color.white.opacity(0.07))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.5),
-                                  style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            }
+            .fill(Color.white.opacity(0.08))
             .frame(width: 36, height: 48)
             .accessibilityHidden(true)
     }
@@ -310,7 +286,6 @@ struct ShelfChip: View {
     let fresh: Bool
     let reduceMotion: Bool
     let lifted: Bool
-    let tilt: Double
     let delay: Double
     let onSession: (DragSession) -> Void
     let onSettled: () -> Void
@@ -320,7 +295,7 @@ struct ShelfChip: View {
     @State private var settled: Bool
     @State private var didArrive: Bool
 
-    init(url: URL, fresh: Bool, reduceMotion: Bool, lifted: Bool, tilt: Double,
+    init(url: URL, fresh: Bool, reduceMotion: Bool, lifted: Bool,
          delay: Double, onSession: @escaping (DragSession) -> Void,
          onSettled: @escaping () -> Void, onRemove: @escaping () -> Void,
          onReveal: @escaping () -> Void) {
@@ -328,7 +303,6 @@ struct ShelfChip: View {
         self.fresh = fresh
         self.reduceMotion = reduceMotion
         self.lifted = lifted
-        self.tilt = tilt
         self.delay = delay
         self.onSession = onSession
         self.onSettled = onSettled
@@ -351,14 +325,11 @@ struct ShelfChip: View {
         }
         .opacity(lifted ? 0.5 : 1)
         .scaleEffect(scale, anchor: .bottom)
-        .rotationEffect(.degrees(reduceMotion ? 0 : tilt))
         .offset(y: lifted && !reduceMotion ? -5 : 0)
         .shadow(color: .black.opacity(lifted && !reduceMotion ? 0.4 : 0),
                 radius: lifted ? 7 : 0, y: lifted ? 4 : 0)
         .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.7),
                    value: lifted)
-        .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.22, dampingFraction: 0.7),
-                   value: tilt)
         // Hover and the pointing hand only. Press scale is a button style;
         // a drag gesture here would take the horizontal scroll and the drag-out.
         .vitalsPressable()

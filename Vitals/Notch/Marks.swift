@@ -71,8 +71,12 @@ struct ClaudeWorkingMark: View {
         Image("ClaudeLogo")
             .resizable()
             .scaledToFit()
-            .rotationEffect(.degrees(running ? 360 : 0))
-            .animation(.linear(duration: 11).repeatForever(autoreverses: false), value: running)
+            // Scoped to the rotation alone. A plain `.animation(value:)` put
+            // the forever-loop on the whole transaction that flipped `running`,
+            // so the mark's position rode it too and slid in from the edge.
+            .animation(.linear(duration: 11).repeatForever(autoreverses: false)) {
+                $0.rotationEffect(.degrees(running ? 360 : 0))
+            }
             .onAppear { running = true }
     }
 }

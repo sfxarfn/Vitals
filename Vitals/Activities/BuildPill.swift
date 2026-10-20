@@ -105,12 +105,13 @@ private struct XcodeBuildSpinner: View {
         Circle()
             .trim(from: 0.08, to: 0.72)
             .stroke(.blue, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-            .rotationEffect(.degrees(rotation - 90))
-            .frame(width: 20, height: 20)
-            .onAppear {
-                withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-                    rotation = 360
-                }
+            // Scoped to the rotation alone. A `withAnimation` on appear put the
+            // forever-loop on the whole transaction, so the spinner's position
+            // rode it too and it drifted in instead of fading in with the pill.
+            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                $0.rotationEffect(.degrees(rotation - 90))
             }
+            .frame(width: 20, height: 20)
+            .onAppear { rotation = 360 }
     }
 }

@@ -3,10 +3,10 @@ import SwiftUI
 import Observation
 
 /// A file being dragged near the housing. `pull` is 0 at the edge of the
-/// reach and 1 on the notch; `lean` is -1…1 across that reach.
+/// reach and 1 on the notch. Where across the reach it sits is deliberately
+/// not tracked — the notch grows toward the file, it does not follow it.
 struct FileDrag: Equatable {
     var pull: CGFloat
-    var lean: CGFloat
 }
 
 @Observable
@@ -18,12 +18,12 @@ final class NotchController {
 
     private(set) var state: NotchState = .idle
     private(set) var metrics = NotchMetrics(notch: .zero)
-    private(set) var cpuGlow: Signal?
     private(set) var thermalGlow: Signal?
     private(set) var extensions = ExtensionSlots.empty
 
     let telemetry = Telemetry()
     let shelf = Shelf()
+    let nowPlaying = NowPlaying()
     /// Where a file drag sits relative to the housing. Nil the moment the drag
     /// leaves or ends — a leftover value would keep the silhouette animating
     /// for the rest of the day.
@@ -56,6 +56,9 @@ final class NotchController {
     private var localDragMonitor: Any?
     private var dwell: Timer?
     private var eventDismiss: Timer?
+    /// The last Xcode Behavior lifecycle to end — what the verdict that follows
+    /// it is about.
+    private var lastXcodeRun: (job: String?, endedAt: Date)?
     private let accessories = AccessoryWatcher()
     private let builds = BuildWatcher()
     private let commands = CommandReceiver()
@@ -74,29 +77,55 @@ final class NotchController {
     /// collapsed by name: Claude is one condition even when two sessions work.
     private var reportedExtensions: [String: NotchExtension] = [:]
     private var extensionStartedAt: [String: Date] = [:]
-    private var vpnExtension: NotchExtension?
+    /// When the current VPN connection came on — or when Vitals first saw it
+    /// on, if it was already up at launch. Nil while off.
+    private var vpnOnSince: Date?
+    /// How many reminder marks this connection has already had.
+    private var vpnRemindersShown = 0
+    /// The first reading is where things stand: a VPN already on at launch
+    /// gets no connect pill.
+    private var vpnPrimed = false
+    /// Connected-time marks, in minutes, at which a reminder pill shows — each
+    /// once, then no more for that connection. Backs off rather than repeating:
+    /// the point is catching a tunnel you forgot, and by four hours you have
+    /// either seen it or chosen it.
+    private static let vpnReminderMarks = [30, 60, 120, 240]
     /// Settings previews use the same allocator as live conditions, but expire
     /// on their own so closing Settings cannot strand a fake persistent icon.
     private var previewExtensions: [String: NotchExtension] = [:]
     private var previewExtensionDismiss: [String: Timer] = [:]
     /// Events waiting for the notch, in the order they arrived.
     private var queue: [NotchState] = []
-    /// The one-sided Events currently up, keyed by the side they own, and a
-    /// dismiss timer each. Two flanks, two subsystems, two clocks: Events on
-    /// different sides show at once, so a left pill arriving while a right one
-    /// is up joins it rather than waiting behind it, and each leaves when its
-    /// own 2.6s is spent.
-    private var sided: [Side: Event] = [:]
-    private var sidedDismiss: [Side: Timer] = [:]
     private let dragPasteboard = NSPasteboard(name: .drag)
     private var dragBaseline = -1
     // Global monitors go deaf once the pointer is over our own window, and a
     // drop there never produces a mouse-up we can see — so "still dragging" is
     // measured by how recently drag events arrived, not by mouse-up.
     private var lastDrag = Date.distantPast
+    /// Armed while a file drag holds a committed approach; opens the panel if
+    /// the approach is still there when it fires.
+    private var approachTimer: Timer?
+    /// How close below the housing a file has to come, as `FileDrag.pull`, and
+    /// for how long, before the panel opens to meet it. Half the reach is ~55pt
+    /// under the notch — far enough down that the pointer never has to touch
+    /// the top edge, where macOS takes the drag for Mission Control. The dwell
+    /// is what keeps a drag sweeping across the top of the screen from popping
+    /// the panel on the way past.
+    private static let approachPull: CGFloat = 0.5
+    private static let approachDwell: TimeInterval = 0.12
 
     private static let dwellDelay: TimeInterval = 0.25
     private static let eventDuration: TimeInterval = 2.6
+
+    /// How long a whole-notch Event holds. A track change is two glyphs and no
+    /// reading, so it leaves sooner than the ones with words.
+    private static func duration(of state: NotchState) -> TimeInterval {
+        switch state {
+        case .trackChange, .vpn: return 2
+        default: break
+        }
+        return eventDuration
+    }
     private static let extensionPreviewDuration: TimeInterval = 6
 
     func start() {
@@ -116,6 +145,15 @@ final class NotchController {
             presentNext()
         }
         accessories.start()
+
+        // A track change is one pill, and only the newest one: a change still
+        // waiting when another arrives is replaced, not queued behind it.
+        nowPlaying.onTrackChange = { [weak self] change in
+            guard let self else { return }
+            queue.removeAll { if case .trackChange = $0 { true } else { false } }
+            queue.append(.trackChange(change))
+            presentNext()
+        }
 
         commands.start { [weak self] command in self?.handle(command) }
 
@@ -223,8 +261,7 @@ final class NotchController {
             return
         }
         self.screen = screen
-        metrics = NotchMetrics(notch: notch.size,
-                               synthetic: screen.auxiliaryTopLeftArea == nil)
+        metrics = .measured(notch.size, synthetic: screen.auxiliaryTopLeftArea == nil)
 
         let isNew = window == nil
         let panel = window ?? makePanel()
@@ -233,7 +270,7 @@ final class NotchController {
         if isNew { panel.contentView = NSHostingView(rootView: NotchRoot(controller: self)) }
         // A rebuilt panel must not come back hit-testing with mouse-moved left
         // on from `makePanel`'s old default. Both flags follow the interaction.
-        let interactive = state == .peek || state == .panel
+        let interactive = state == .panel
         panel.ignoresMouseEvents = !interactive
         panel.acceptsMouseMovedEvents = interactive
         place(panel, screen: screen, notch: notch, display: true)
@@ -259,7 +296,7 @@ final class NotchController {
     }
 
     private func place(_ panel: NSPanel, screen: NSScreen, notch: CGRect, display: Bool) {
-        let size = metrics.windowSize
+        let size = metrics.screenWindowSize
         panel.setFrame(CGRect(x: notch.midX - size.width / 2,
                               y: screen.frame.maxY - size.height,
                               width: size.width, height: size.height), display: display)
@@ -329,8 +366,7 @@ final class NotchController {
             percent: telemetry.power.percent,
             onAC: telemetry.power.onAC,
             batteryWatts: telemetry.power.batteryWatts,
-            thermalState: telemetry.thermalState,
-            cpuSustainedSeconds: telemetry.cpuSustainedSeconds
+            thermalState: telemetry.thermalState
         )
 
         queue.append(contentsOf: engine.update(reading).map(NotchState.event))
@@ -340,18 +376,9 @@ final class NotchController {
         // ponytail: re-read on the telemetry tick only, so entering fullscreen
         // leaves a glow up for one poll. Add a fullscreen observer if that shows.
         let visible = menuBarVisible()
-        cpuGlow = visible ? engine.cpuGlow : nil
         thermalGlow = visible ? engine.thermalGlow : nil
 
-        // VPN is a level reading, but its false→true edge supplies the timestamp
-        // that lets it keep arrival order against explicitly reported Extensions.
-        if telemetry.net.vpn, vpnExtension == nil {
-            vpnExtension = NotchExtension(id: "telemetry-vpn", name: "vpn", startedAt: .now)
-            updateExtensionSlots()
-        } else if !telemetry.net.vpn, vpnExtension != nil {
-            vpnExtension = nil
-            updateExtensionSlots()
-        }
+        trackVPN()
 
         presentNext()
     }
@@ -372,13 +399,42 @@ final class NotchController {
         return .idle
     }
 
-    private func xcodeBuildState(progress: BuildProgress? = nil) -> NotchState {
-        let liveIcon = NSWorkspace.shared.runningApplications.first(where: {
+    private var xcodeIcon: NSImage? {
+        NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == "com.apple.dt.Xcode"
-        })?.icon
-        return .building(XcodeBuildActivity(
+        })?.icon ?? installedXcodeIcon
+    }
+
+    private func xcodeBuildState(progress: BuildProgress? = nil) -> NotchState {
+        .building(XcodeBuildActivity(
             progress: progress ?? builds.progress,
-            icon: progress?.icon ?? builds.progress?.icon ?? liveIcon ?? installedXcodeIcon))
+            icon: progress?.icon ?? builds.progress?.icon ?? xcodeIcon))
+    }
+
+    /// Xcode's Behaviors end a run with `xcode-build-succeeded` or `-failed`.
+    /// Those are drawn as the build verdict — Xcode's icon, the job, how long
+    /// the run took — rather than as a generic command Event. Anything else
+    /// stays an `externalEvent`.
+    private func xcodeVerdict(_ event: ExternalEvent) -> NotchState? {
+        guard isXcodeBuildActivity(event.subject) else { return nil }
+        let ending: BuildProgress.Ending
+        if event.isFailure {
+            ending = .failed
+        } else if ["succeeded", "success", "passed", "done"].contains(event.outcome.lowercased()) {
+            ending = .succeeded
+        } else {
+            return nil
+        }
+        // The lifecycle that just stopped is this run. One older than half a
+        // minute is a different run.
+        let run = lastXcodeRun.flatMap { Date().timeIntervalSince($0.endedAt) < 30 ? $0 : nil }
+        lastXcodeRun = nil
+        return .verdict(BuildProgress(
+            label: ending == .succeeded ? "Success" : "Failed",
+            job: run?.job ?? builds.progress?.job ?? "Build",
+            done: 0, total: 0,
+            icon: xcodeIcon,
+            ending: ending))
     }
 
     private var atRest: Bool {
@@ -393,7 +449,7 @@ final class NotchController {
     private func handle(_ command: ExternalCommand) {
         switch command {
         case .event(let event):
-            queue.append(.externalEvent(event))
+            queue.append(xcodeVerdict(event) ?? .externalEvent(event))
             presentNext()
 
         case .activityStart(let activity):
@@ -403,6 +459,11 @@ final class NotchController {
 
         case .activityStop(let id):
             let stopped = externalActivities.removeValue(forKey: id)
+            // Noted here: the verdict event follows this stop, and by then the
+            // lifecycle — and Xcode's job word — may be gone.
+            if let stopped, isXcodeBuildActivity(stopped.name) {
+                lastXcodeRun = (builds.progress?.job, Date())
+            }
             if let stopped, isXcodeBuildActivity(stopped.name),
                !externalActivities.values.contains(where: { isXcodeBuildActivity($0.name) }) {
                 builds.explicitLifecycleEnded()
@@ -438,8 +499,39 @@ final class NotchController {
         for (name, item) in previewExtensions where active[name] == nil {
             active[name] = item
         }
-        if let vpnExtension { active["vpn"] = vpnExtension }
         extensions = .arrange(Array(active.values))
+    }
+
+    /// VPN is a level reading; only its edges and its age are news. Off → on
+    /// queues the connect pill, every time, auto-connect included. While it
+    /// stays on, each mark in `vpnReminderMarks` queues one reminder. Off says
+    /// nothing and resets the schedule.
+    private func trackVPN() {
+        let on = telemetry.net.vpn
+        defer { vpnPrimed = true }
+        guard on else {
+            if vpnOnSince != nil {
+                vpnOnSince = nil
+                vpnRemindersShown = 0
+                // A pill about a tunnel that has already closed is wrong news.
+                queue.removeAll { if case .vpn = $0 { true } else { false } }
+            }
+            return
+        }
+        guard let since = vpnOnSince else {
+            vpnOnSince = .now
+            vpnRemindersShown = 0
+            if vpnPrimed { queue.append(.vpn(VPNNotice(minutesOn: nil))) }
+            return
+        }
+        let minutes = Int(Date().timeIntervalSince(since) / 60)
+        // The latest mark passed, not every one: a Mac that slept through two
+        // marks gets one reminder, never a stack of them.
+        guard let reached = Self.vpnReminderMarks.lastIndex(where: { $0 <= minutes }),
+              reached >= vpnRemindersShown else { return }
+        vpnRemindersShown = reached + 1
+        queue.removeAll { if case .vpn(let n) = $0 { n.minutesOn != nil } else { false } }
+        queue.append(.vpn(VPNNotice(minutesOn: Self.vpnReminderMarks[reached])))
     }
 
     private func isXcodeBuildActivity(_ name: String) -> Bool {
@@ -451,24 +543,16 @@ final class NotchController {
             (words.contains("build") || words.contains("archive"))
     }
 
-    private var showingSided: Bool {
-        if case .sided = state { return true }
-        return false
-    }
-
     // MARK: Arbitration
 
     private func presentNext() {
-        // Walks the queue rather than taking one: Events on different sides show
-        // at once, so several entries may be presentable on the same pass.
-        // Anything that owns the whole notch still stops the walk — it has to
-        // wait for the flanks to clear, and for the ones behind it to keep their
-        // order behind it.
+        // Walks the queue only to drop what has gone stale on the way; the
+        // first live entry takes the notch, and the rest wait their turn.
         while let next = queue.first {
-            if case .event(let event) = next, event.signal.side != .center {
-                guard atRest || showingSided else { return }
+            // A track change shown late is about a song you are already
+            // hearing. Past a second it is dropped, not shown.
+            if case .trackChange(let change) = next, Date().timeIntervalSince(change.at) > 1 {
                 queue.removeFirst()
-                present(event, on: event.signal.side)
                 continue
             }
             guard atRest else { return }
@@ -478,50 +562,16 @@ final class NotchController {
         }
     }
 
-    /// One Event into one flank. A side already speaking is replaced rather than
-    /// queued behind: two Events on one side are the same subsystem talking
-    /// twice, and the newer thing it has to say is the true one.
-    private func present(_ event: Event, on side: Side) {
-        sidedDismiss[side]?.invalidate()
-        sided[side] = event
-        state = .sided(left: sided[.left], right: sided[.right])
-        sidedDismiss[side] = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // The flank is released whether or not these pills are still the
-                // thing on screen — this timer is the only owner of the slot, so
-                // bailing out early strands it and leaves a side marked busy
-                // that nothing will ever free.
-                self.sided[side] = nil
-                self.sidedDismiss[side] = nil
-                if self.showingSided {
-                    self.state = self.sided.isEmpty ? self.resting
-                                                   : .sided(left: self.sided[.left], right: self.sided[.right])
-                }
-                self.presentNext()
-            }
-        }
-    }
-
-    /// Drops both flanks at once — for the paths that take the notch away from
-    /// the pills entirely, where letting the timers fire later would put a
-    /// stale pill back over whatever replaced it.
-    private func clearSided() {
-        sidedDismiss.values.forEach { $0.invalidate() }
-        sidedDismiss.removeAll()
-        sided.removeAll()
-    }
-
     /// A state that owns the whole notch for its lifetime and then hands it
     /// straight back — to the Activity it borrowed it from if that is still
     /// running, and to idle if the work finished meanwhile.
     private func presentAlone(_ next: NotchState) {
         state = next
         eventDismiss?.invalidate()
-        eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.eventDuration, repeats: false) { [weak self] _ in
+        eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.duration(of: next), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 // Only the pill this timer was armed for may be taken down by
-                // it. Anything that happened since — a hover, a sided pill, the
+                // it. Anything that happened since — a hover, another pill, the
                 // next preview — owns the notch now, and clearing the state out
                 // from under it strands that state's bookkeeping: a hover left
                 // with the panel still taking the mouse, a flank whose slot is
@@ -559,12 +609,9 @@ final class NotchController {
     /// they hold rather than presenting, so there is nothing to fire. So are the
     /// Interactions — hovering the notch is already the way to see those.
     static let previews: [(group: String, previews: [Preview])] = [
+        // Heat is absent with the other glow-only signals: it lights the edges
+        // and never presents.
         ("Power",   [pill(.chargingStarted), pill(.charged)]),
-        ("Thermal", [
-            pill(.thermalSerious),
-            pill(.thermalCritical),
-            allClear(.thermalCritical),
-        ]),
         ("Connections", [
             ("AirPods connected", .accessory(Accessory(name: "AirPods Pro", kind: .audio, battery: 72))),
             // No level reported — the flank falls back to the Bluetooth mark.
@@ -583,6 +630,10 @@ final class NotchController {
             ("Build failed", .verdict(buildPreview("Failed", .failed))),
             ("Build succeeded", .verdict(buildPreview("Success", .succeeded))),
         ]),
+        ("VPN", [
+            ("VPN connected", .vpn(VPNNotice(minutesOn: nil))),
+            ("VPN on for an hour", .vpn(VPNNotice(minutesOn: 60))),
+        ]),
         ("Commands", [
             ("Tests running", .externalActivity(ExternalActivity(
                 id: "preview", name: "tests", startedAt: .now))),
@@ -593,10 +644,6 @@ final class NotchController {
 
     private static func pill(_ signal: Signal) -> Preview {
         (signal.title, .event(Event(signal: signal)))
-    }
-
-    private static func allClear(_ signal: Signal) -> Preview {
-        (signal.recoveryTitle, .event(Event(signal: signal, recovered: true)))
     }
 
     private static func buildPreview(_ label: String, _ ending: BuildProgress.Ending?) -> BuildProgress {
@@ -636,14 +683,12 @@ final class NotchController {
     func preview(_ state: NotchState) {
         queue.append(state)
         // Whatever is up loses: pressing a second button is a request to see
-        // that state now, not after the current one times out. Sided Events are
-        // the exception — they are the thing you press two buttons to see
-        // together, so the queue gets first refusal. A press that drains nothing
-        // was blocked by something owning the whole notch, and that is exactly
-        // the case where it has to be cleared for it: the button has to do
-        // something visible every single time it is pressed.
+        // that state now, not after the current one times out. A press that
+        // drains nothing was blocked by something owning the whole notch, and
+        // that is exactly the case where it has to be cleared for it: the
+        // button has to do something visible every single time it is pressed.
         let queued = queue.count
-        if atRest || showingSided { presentNext() }
+        if atRest { presentNext() }
         if queue.count == queued { shrink() }
     }
 
@@ -654,6 +699,8 @@ final class NotchController {
     }
 
     func endFileDrag() {
+        approachTimer?.invalidate()
+        approachTimer = nil
         guard fileDrag != nil else { return }
         fileDrag = nil
     }
@@ -700,13 +747,12 @@ final class NotchController {
         VitalsCursor.forceArrow()
     }
 
-    /// Visible peek or panel, and only while that window is hit-testing.
+    /// The panel is up, and only while that window is hit-testing.
     private var pointerOverOpenNotch: Bool {
         guard window?.ignoresMouseEvents == false, let screen,
-              state == .peek || state == .panel else { return false }
-        let shape = metrics.size(for: state, extensions: extensions)
-        let rect = CGRect(x: screen.frame.midX - shape.width / 2
-                          + metrics.lean(for: state, extensions: extensions),
+              state == .panel else { return false }
+        let (shape, lean) = metrics.screenShape(for: state, extensions: extensions)
+        let rect = CGRect(x: screen.frame.midX - shape.width / 2 + lean,
                           y: screen.frame.maxY - shape.height,
                           width: shape.width, height: shape.height)
         return rect.contains(NSEvent.mouseLocation)
@@ -721,7 +767,7 @@ final class NotchController {
     /// A file drag inside the reach around the housing, before the panel is a
     /// real drop target. The global monitor goes deaf once the pointer is over
     /// the open panel, so this only covers the approach; SwiftUI's drop takes
-    /// the lean from there. Quantized so a moving pointer does not republish
+    /// over from there. Quantized so a moving pointer does not republish
     /// every pixel — nothing here runs unless a drag is already in hand.
     private func trackFileDrag() {
         // `dragIsFile` and the menu-bar bit were resolved once, on the drag
@@ -735,26 +781,64 @@ final class NotchController {
             return
         }
         // Same gate as `dragMoved`. A hidden menu bar (fullscreen) and a shape
-        // that is not at rest or peek are not an approach — leaning them would
+        // that is not at rest are not an approach — reaching with them would
         // keep a pill or a fullscreen notch reaching for a file it will not take.
         let p = NSEvent.mouseLocation
         let span = notch.width / 2 + 120
         let near = abs(p.x - notch.midX) < span
             && p.y < screen.frame.maxY + 4
             && p.y > notch.minY - 110
-        guard (atRest || state == .peek), near else {
+        guard atRest, near else {
             endFileDrag()
             return
         }
-        let lean = quant((p.x - notch.midX) / span)
         let below = max(0, notch.minY - p.y)
         let pull = quant(1 - min(1, below / 110))
         guard pull > 0.02 else {
             endFileDrag()
             return
         }
-        let next = FileDrag(pull: min(1, pull), lean: max(-1, min(1, lean)))
+        let next = FileDrag(pull: min(1, pull))
         if next != fileDrag { fileDrag = next }
+        commitApproach(at: p, pull: pull)
+    }
+
+    /// Opens the panel under a file that is clearly coming in, before it gets
+    /// to the menu bar. Only once the pointer is inside the area the open
+    /// panel will cover — so the file is already over the drop target when it
+    /// opens — and only if it is still there after the dwell. `dragMoved`'s
+    /// in-notch trigger stays as the fallback.
+    private func commitApproach(at p: CGPoint, pull: CGFloat) {
+        guard pull >= Self.approachPull, let screen, wouldBeInsidePanel(p, on: screen) else {
+            approachTimer?.invalidate()
+            approachTimer = nil
+            return
+        }
+        guard approachTimer == nil else { return }
+        approachTimer = Timer.scheduledTimer(withTimeInterval: Self.approachDwell, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.approachTimer = nil
+                // Re-read rather than trusting the arming sample: the drag may
+                // have moved on, ended, or something else may own the notch.
+                let now = NSEvent.mouseLocation
+                guard self.dragIsFile == true, self.atRest,
+                      (self.fileDrag?.pull ?? 0) >= Self.approachPull,
+                      let screen = self.screen, self.wouldBeInsidePanel(now, on: screen)
+                else { return }
+                self.grow()
+            }
+        }
+    }
+
+    /// The open panel's shape on this screen — the same rect `mouseMoved`
+    /// keeps the pointer inside once it is up.
+    private func wouldBeInsidePanel(_ p: CGPoint, on screen: NSScreen) -> Bool {
+        let (shape, lean) = metrics.screenShape(for: .panel, extensions: extensions)
+        let rect = CGRect(x: screen.frame.midX - shape.width / 2 + lean,
+                          y: screen.frame.maxY - shape.height,
+                          width: shape.width, height: shape.height)
+        return rect.contains(p)
     }
 
     private func quant(_ value: CGFloat, _ steps: CGFloat = 20) -> CGFloat {
@@ -770,7 +854,7 @@ final class NotchController {
         // Whether it is a file, and whether the menu bar is up, was decided
         // once when the drag began.
         guard dragIsFile == true, dragMenuBarVisible == true,
-              atRest || state == .peek, dragBaseline != -1,
+              atRest, dragBaseline != -1,
               dragPasteboard.changeCount != dragBaseline,
               let notch = notchRect, notch.contains(NSEvent.mouseLocation) else { return }
         grow()
@@ -780,9 +864,11 @@ final class NotchController {
 
     private var notchRect: CGRect? {
         guard let screen, window != nil else { return nil }
-        return CGRect(x: screen.frame.midX - metrics.notch.width / 2,
-                      y: screen.frame.maxY - metrics.notch.height,
-                      width: metrics.notch.width, height: metrics.notch.height)
+        let notch = CGSize(width: metrics.notch.width * metrics.scale,
+                           height: metrics.notch.height * metrics.scale)
+        return CGRect(x: screen.frame.midX - notch.width / 2,
+                      y: screen.frame.maxY - notch.height,
+                      width: notch.width, height: notch.height)
     }
 
     private func handle(_ event: NSEvent) {
@@ -822,14 +908,12 @@ final class NotchController {
         guard let screen, let notch = notchRect else { return }
         let p = NSEvent.mouseLocation
 
-        if state == .panel || state == .peek {
-            // Whichever shape is on screen is the region to stay inside; peek is
-            // a good deal smaller than the panel.
-            let grown = metrics.size(for: state, extensions: extensions)
+        if state == .panel {
+            // The panel's own shape is the region to stay inside.
+            let (grown, lean) = metrics.screenShape(for: state, extensions: extensions)
             // Uneven flanks slide the shape off the notch's centre, so the
             // region to stay inside slides with it — see `NotchMetrics.lean`.
-            let rect = CGRect(x: screen.frame.midX - grown.width / 2
-                              + metrics.lean(for: state, extensions: extensions),
+            let rect = CGRect(x: screen.frame.midX - grown.width / 2 + lean,
                               y: screen.frame.maxY - grown.height,
                               width: grown.width, height: grown.height)
             // Straying outside mid-drag must not slam the shelf shut with the
@@ -839,8 +923,8 @@ final class NotchController {
             return
         }
 
-        // An Interaction needs a dwell delay, or peek fires every time the
-        // pointer crosses the notch on its way to the menu bar.
+        // The panel needs a dwell delay, or it opens every time the pointer
+        // crosses the notch on its way to the menu bar.
         guard notch.contains(p), menuBarVisibleNow(), atRest else {
             dwell?.invalidate(); dwell = nil
             return
@@ -849,23 +933,22 @@ final class NotchController {
         dwell = Timer.scheduledTimer(withTimeInterval: Self.dwellDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, notch.contains(NSEvent.mouseLocation), self.atRest else { return }
-                // A loaded shelf is why you came back: peek would only make you
-                // press the tray button to see what you already know is in there.
-                // Empty, there is nothing to open onto and peek is the floor.
-                self.grow(self.shelf.urls.isEmpty ? .peek : .panel)
+                self.grow(.panel)
             }
         }
     }
 
-    /// Into an Interaction. Both of them take the mouse — peek has the gear to
-    /// click. The global monitor goes deaf while the pointer is over the panel,
+    /// Into the panel, which takes the mouse — it has the stats, the shelf
+    /// and its pages to click. The global monitor goes deaf while the pointer is over it,
     /// but it hears the move that leaves it, which is the one `shrink` needs.
     func grow(_ next: NotchState = .panel) {
         dwell?.invalidate(); dwell = nil
         state = next
-        // Both Interactions show live numbers — peek's CPU readout would sit up
-        // to 10s stale on the resting poll, which is longer than a hover.
+        // The panel shows live numbers — its CPU flank would sit up to 10s
+        // stale on the resting poll, which is longer than a hover.
         telemetry.grown = true
+        // The reader runs only while there is a panel to show it in.
+        nowPlaying.active = true
         window?.ignoresMouseEvents = false
         window?.acceptsMouseMovedEvents = true
     }
@@ -879,9 +962,9 @@ final class NotchController {
         // drag cursor alone while a file is still in hand — mouse-up clears
         // `draggingFile`, not this.
         VitalsCursor.forceArrow()
-        clearSided()
         state = resting
         telemetry.grown = false
+        nowPlaying.active = false
         window?.ignoresMouseEvents = true
         window?.acceptsMouseMovedEvents = false
         presentNext()
@@ -890,21 +973,27 @@ final class NotchController {
 
 private struct NotchRoot: View {
     @Bindable var controller: NotchController
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         NotchView(state: controller.state,
                   metrics: controller.metrics,
                   extensions: controller.extensions,
                   telemetry: controller.telemetry,
-                  cpuGlow: controller.cpuGlow,
                   thermalGlow: controller.thermalGlow,
                   shelf: controller.shelf,
+                  nowPlaying: controller.nowPlaying,
                   fileDrag: controller.fileDrag,
                   endFileDrag: controller.endFileDrag,
                   airDrop: controller.airDrop,
                   show: controller.grow)
             .contextMenu {
-                SettingsLink { Text("Settings…") }
+                // Not `SettingsLink`: it opens the window without activating
+                // Vitals, so Settings landed behind the frontmost app.
+                Button("Settings…") {
+                    openSettings()
+                    SettingsWindow.bringForward()
+                }
                 Divider()
                 Button("Quit Vitals") { NSApp.terminate(nil) }
             }

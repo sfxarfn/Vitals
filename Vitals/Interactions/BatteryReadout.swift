@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The battery in words and numbers. It appears in both Interactions — a
-/// one-line summary in peek, the three power figures behind it in the panel —
-/// so the wording lives in one place and cannot drift between them.
+/// The battery in words and numbers. It appears twice in the panel — the
+/// summary column's short value and the detail behind it — and in the battery
+/// pills, so the wording lives in one place and cannot drift between them.
 ///
 /// The recurring caveat: `isCharging` reads false through adapter negotiation
 /// and for every top-off pulse of a hold at full, so nothing here decides "full"
@@ -21,8 +21,8 @@ extension NotchView {
         telemetry.power.percent >= 100 ? "Full" : "\(telemetry.power.percent)%"
     }
 
-    /// What colour the pack is. The panel's number only — peek's glyph stays
-/// white, because peek already says the state in words.
+    /// What colour the pack is. The detail's number only — the summary column's
+/// glyph stays white, because the detail is where the tinted number lives.
 ///
 /// Charging amber and full green are `Signal`'s colours, not new ones: the
 /// tint is the state of the pack, never a severity. The two low bands below
@@ -42,59 +42,26 @@ default: return .white
 }
 }
 
-// MARK: Peek's summary
+// MARK: The summary column
 
-    var batteryStatus: some View {
-        HStack(spacing: 7) {
-            Image(systemName: telemetry.power.isCharging
-                  ? "battery.100percent.bolt"
-                  : "battery.\(batteryStep)percent")
-                // Stays white at every level. Peek is one line about the whole
-                // machine and the words beside this glyph already say what the
-                // pack is doing — a colour here is a second voice saying it,
-                // and the panel behind it is where the tinted number lives.
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
-                // The bolt variant is not the same width as the plain glyph, so
-                // a fixed box is what stops the two lines beside it sliding
-                // sideways the moment the charger goes in.
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(powerSource)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text(chargeDetail)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-            .monospacedDigit()
-            .lineLimit(1).minimumScaleFactor(0.7)
-        }
+    /// A full pack on the adapter is not a battery any more — the machine is
+    /// running off the wall — so the column says that instead of "100%".
+    private var onWallPower: Bool {
+        telemetry.power.onAC && telemetry.power.percent >= 100
     }
 
-    /// First line: what the machine is running on. A full pack is decided by the
-    /// level, not by `isCharging`.
-    private var powerSource: String {
-        let p = telemetry.power
-        guard p.onAC else { return "On Battery" }
-        return p.percent >= 95 ? "Fully Charged" : (p.isCharging ? "Charging" : "Plugged In")
+    /// Three states, and "AC" is only the last of them. On the adapter below
+    /// full the pack is still filling, so it says charging — the bolt and the
+    /// level — rather than AC. Decided by the adapter, not `isCharging`: that
+    /// flag reads false through negotiation and every top-off pulse, which would
+    /// flick the bolt off on a pack that is plainly charging.
+    var batteryMiniSymbol: String {
+        if onWallPower { return "powerplug.fill" }
+        return telemetry.power.onAC ? "battery.100percent.bolt" : "battery.\(batteryStep)percent"
     }
 
-    /// Second line: where the power is coming from, which is what the first line
-    /// leaves open.
-    private var chargeDetail: String {
-        let p = telemetry.power
-        guard p.onAC else { return p.minutesToEmpty.map(duration) ?? batteryValue }
-        // A full pack means nothing is flowing into it — the wattage stops being
-        // the story and the adapter is simply running the machine.
-        guard p.percent < 95, let rated = p.adapterWatts else { return "Using Direct Power" }
-        var source = "Source: \(Int(rated.rounded()))W"
-        // Only worth the parenthesis when the port did not hand over the brick's
-        // full rating — otherwise it is the same number said twice.
-        if let live = p.adapterContractWatts, abs(live - rated) >= 1 {
-            source += " (\(Int(live.rounded()))W)"
-        }
-        return source
+    var batteryMiniValue: String {
+        onWallPower ? "AC" : "\(telemetry.power.percent)%"
     }
 
     /// SF Symbols only ships five fill levels, so the reading snaps to the
@@ -112,14 +79,15 @@ default: return .white
 
     // MARK: The panel's numbers
 
-    /// Takes the shelf row's slot, and its 104pt tile width, so the swap reads
-    /// as the row changing its mind rather than the panel resizing.
+    /// A detail in the panel's slot: the same 96pt hero tile and four rows as
+    /// the thermal and network details, so switching reads as the slot
+    /// changing its mind rather than the layout moving.
     ///
     /// Four rows, matching the thermal panel's block: what reaches the battery,
     /// what the machine burns, what the wall delivers, and what the pack has
     /// left to give.
     var batteryPanel: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             VStack(spacing: 2) {
                 Text("\(telemetry.power.percent)%")
                     .font(.system(size: 22, weight: .semibold, design: .rounded))
@@ -128,13 +96,13 @@ default: return .white
                 Text(chargeState)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.5))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .lineLimit(1).minimumScaleFactor(0.7)
             }
-            .frame(width: 104).frame(maxHeight: .infinity)
+            .frame(width: 96).frame(maxHeight: .infinity)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
 
             VStack(spacing: 5) {
-                statLine("Battery", String(format: "%+.1f W", telemetry.power.batteryWatts))
+                statLine("Battery", batteryWattsValue)
                 statLine("System", telemetry.power.systemWatts.map { String(format: "%.1f W", $0) } ?? "—")
                 statLine("Adapter", adapterValue, dot: adapterDot)
                 // The split behind the row: the percentage is what the pack can
@@ -143,9 +111,16 @@ default: return .white
                 statLine("Health", healthValue, tint: .white.opacity(0.45))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .background { RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)) }
         }
+    }
+
+    /// Signed, except at nothing: "-0.0 W" is a rounding artefact that reads as
+    /// a drain, so anything that rounds to zero says plain "0.0 W".
+    private var batteryWattsValue: String {
+        let w = telemetry.power.batteryWatts
+        return abs(w) < 0.05 ? "0.0 W" : String(format: "%+.1f W", w)
     }
 
     /// On AC with no estimate the honest line is that it is plugged in —
@@ -167,8 +142,8 @@ default: return .white
 
     /// Amber when the port settled below what the brick is rated for — a 96W
     /// charger negotiating 27W is a cable, a hub or a shared lane, and all
-    /// three are things you can go fix. Same 1W tolerance peek's line uses to
-    /// decide the figure is worth saying twice.
+    /// three are things you can go fix. 1W of tolerance, because a
+    /// rounding difference is not a finding.
     ///
     /// Green is the absence of that finding, not proof of the opposite, and it
     /// has to be: a full pack draws nothing, so the firmware reports no

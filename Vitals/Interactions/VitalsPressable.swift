@@ -3,7 +3,7 @@
 //  Vitals
 //
 //  Hover, press, and the pointing-hand cursor for everything you can click
-//  in peek and the panel. One style so the controls cannot drift.
+//  in the panel. One style so the controls cannot drift.
 
 import AppKit
 import SwiftUI
@@ -84,8 +84,13 @@ extension View {
 /// button style. `configuration.isPressed` is the click, so nothing installs
 /// a drag gesture beside it.
 struct VitalsPressStyle: ButtonStyle {
+    /// Off for a control with no room to grow into — the AirDrop tile sits
+    /// against the camera housing, so it answers hover with its own light
+    /// instead, and a press dims it rather than shrinking it.
+    var scales = true
+
     func makeBody(configuration: Configuration) -> some View {
-        PressableChrome(pressed: configuration.isPressed) {
+        PressableChrome(pressed: configuration.isPressed, scales: scales) {
             configuration.label
         }
     }
@@ -97,10 +102,12 @@ private struct VitalsPressable: ViewModifier {
     }
 }
 
-/// Shared hover, highlight, and cursor. `pressed` comes from a button style;
-/// rows that are only hovered pass false and never see a drag gesture.
+/// Shared hover and cursor. Hover grows the control; it does not wash it.
+/// `pressed` comes from a button style; rows that are only hovered pass false
+/// and never see a drag gesture.
 private struct PressableChrome<Content: View>: View {
     var pressed: Bool
+    var scales = true
     @ViewBuilder var content: () -> Content
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -113,14 +120,12 @@ private struct PressableChrome<Content: View>: View {
     var body: some View {
         content()
             .scaleEffect(scale)
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(hovered && !pressed ? 0.12 : 0))
-                    .allowsHitTesting(false)
-            }
+            .opacity(!scales && pressed ? 0.8 : 1)
             .animation(motion, value: hovered)
             .animation(motion, value: pressed)
-            .background { PointingCursor() }
+            // A disabled control gets no hand: the tracking view would claim
+            // the cursor on enter without asking whether it can be clicked.
+            .background { if isEnabled { PointingCursor() } }
             .onContinuousHover { phase in
                 guard isEnabled else {
                     hovered = false
@@ -165,7 +170,7 @@ private struct PressableChrome<Content: View>: View {
     }
 
     private var scale: CGFloat {
-        guard !reduceMotion else { return 1 }
+        guard scales, !reduceMotion else { return 1 }
         if pressed { return 0.95 }
         if hovered { return 1.06 }
         return 1

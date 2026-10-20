@@ -44,6 +44,9 @@ Xcode to install it.
 4. After the notch appears, the transferred `Vitals.zip` may be removed.
 
 Vitals is an accessory app: it has no Dock icon or ordinary menu bar item.
+While its Settings window is open it shows in the Dock and in ⌘Tab, so you
+can tell Settings is open and get back to it; closing Settings removes the
+icon again.
 Right-click the notch to open Settings or quit the app.
 
 ### Grant permissions
@@ -61,6 +64,13 @@ Open Vitals Settings by right-clicking the notch.
   battery Events.
 - Enable **Launch at login** under **General** if Vitals should start after each
   login.
+- **Now Playing** needs no permission on its own: it reads what is playing
+  through the bundled MediaRemote adapter, which runs under the system's
+  `/usr/bin/perl`. Only if that stops working (a future macOS closing the
+  route) does Vitals fall back to asking Music and Spotify directly, and
+  macOS then asks once per app whether Vitals may control it — choose
+  **Allow**. Turning it off later lives in **System Settings → Privacy &
+  Security → Automation**.
 
 Command notifications—including Xcode Behavior lifecycles—power, thermal, CPU,
 and network telemetry do not depend on the Accessibility permission.

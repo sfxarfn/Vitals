@@ -28,8 +28,23 @@ struct NotchShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let t = topCornerRadius, b = bottomCornerRadius
+        // The flat top is the screen edge. An edge that lands on it
+        // anti-aliases into a hairline of the menu bar across the notch, so
+        // the close runs a point above the rect and the window clips it off.
+        //
+        // Each flare still starts on `minY`, where its tangent is horizontal,
+        // so it leaves the bezel flat. Started up on `top` instead, it has
+        // already dropped by the time it reaches the edge and meets it at an
+        // angle — a visible kink. The overhang reaches each tip by a sliver
+        // that keeps the same horizontal tangent and tapers outward, not by
+        // a square: if the window lands a pixel low and that point shows, a
+        // square's end draws as a 1px vertical line at both tips.
+        let top = rect.minY - 1
+        let taper: CGFloat = 6
 
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.move(to: CGPoint(x: rect.minX - taper, y: top))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY),
+                          control: CGPoint(x: rect.minX - taper / 2, y: rect.minY))
         path.addQuadCurve(to: CGPoint(x: rect.minX + t, y: rect.minY + t),
                           control: CGPoint(x: rect.minX + t, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX + t, y: rect.maxY - b))
@@ -41,7 +56,9 @@ struct NotchShape: Shape {
         path.addLine(to: CGPoint(x: rect.maxX - t, y: rect.minY + t))
         path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY),
                           control: CGPoint(x: rect.maxX - t, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX + taper, y: top),
+                          control: CGPoint(x: rect.maxX + taper / 2, y: rect.minY))
+        path.closeSubpath()
         return path
     }
 }

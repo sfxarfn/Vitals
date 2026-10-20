@@ -8,10 +8,10 @@ struct NotchExtension: Equatable, Identifiable {
     var name: String
     var startedAt: Date
 
-    /// The fallback mark, and only that: both conditions Vitals ships draw hand
-    /// -made glyphs in `NotchView.extensionGlyph` instead — a word badge for VPN
-    /// and Claude's own burst — because SF Symbols has neither. Anything that
-    /// reaches here is a condition nobody has drawn a mark for yet.
+    /// The fallback mark, and only that: the condition Vitals ships, Claude,
+    /// draws its own burst in `NotchView.extensionGlyph` because SF Symbols has
+    /// none. Anything that reaches here is a condition nobody has drawn a mark
+    /// for yet.
     var symbol: String { "puzzlepiece.extension.fill" }
 }
 
@@ -37,7 +37,7 @@ struct ExtensionSlots: Equatable {
 enum NotchExtensionSelfCheck {
     static func run() {
         let first = NotchExtension(
-            id: "vpn", name: "vpn", startedAt: Date(timeIntervalSince1970: 1))
+            id: "reported", name: "reported", startedAt: Date(timeIntervalSince1970: 1))
         let second = NotchExtension(
             id: "claude", name: "claude", startedAt: Date(timeIntervalSince1970: 2))
 

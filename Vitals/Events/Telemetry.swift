@@ -19,23 +19,30 @@ struct PowerSample {
     var batteryWatts: Double = 0   // signed: + charging, - draining
     var healthPercent: Int?        // charge the pack still holds, against its design capacity
     var cycleCount: Int?
+    /// The firmware's own measure of what the whole machine is drawing, on AC
+    /// or off. Nil on a firmware that does not publish `PowerTelemetryData`.
+    var systemLoadWatts: Double?
 
-    /// What the machine itself is burning: wall input minus what reaches the cells.
+    /// What the machine itself is burning. The firmware's measured load when it
+    /// has one. The fallback — the brick's rating minus what reaches the cells —
+    /// is a ceiling, not a draw, and only exists on AC; it is kept for
+    /// firmwares without the measurement rather than trusted.
     var systemWatts: Double? {
+        if let systemLoadWatts { return systemLoadWatts }
         guard let adapterWatts else { return nil }
         return max(adapterWatts - max(batteryWatts, 0), 0)
     }
 }
 
 /// The two subsystems that stall a build: the die getting hot and the cores
-/// staying pegged. One each for the notch's two edges.
+/// staying pegged. The panel shows both; only the heat drives a Signal.
 struct StallSample {
     var cpuPercent: Double = 0
     /// Hottest die sensor, °C. Nil on a machine whose sensor tree we cannot read.
     var tempC: Double?
     /// The same sensors split by which block of the die they sit on, hottest per
     /// block. Only the thermal panel reads this — every pill and glow works off
-    /// `tempC`, because one edge can only say one number.
+    /// `tempC`, because an edge can only say one number.
     var dieGroups: [SensorGroup: Double] = [:]
 }
 
@@ -227,19 +234,14 @@ final class Telemetry {
     /// the panel tints the total, but nothing anywhere decides anything from it,
     /// and there is still no threshold, no pill and no glow behind it.
     private(set) var memory: MemorySample?
-    /// Throughput, both directions. Read only by peek, never by a `Signal` — same
+    /// Throughput, both directions. Read only by the panel, never by a `Signal` — same
     /// standing as `memory`: no threshold, no pill, no glow, just a number in a
     /// surface you had to hover for.
     private(set) var net = NetSample()
 
-    /// Seconds of continuous CPU load above the sustained threshold.
-    private(set) var cpuSustainedSeconds: Double = 0
-
     static let historyLength = 120
-    private static let sustainedCPUThreshold = 85.0
 
     private var lastCPUTicks: (user: UInt64, sys: UInt64, idle: UInt64, nice: UInt64)?
-    private var lastCPUSampleAt: Date?
 
     private var lastNetBytes: (up: UInt32, down: UInt32)?
     private var lastNetSampleAt: Date?
@@ -332,26 +334,76 @@ final class Telemetry {
             s.adapterWatts = (ad["Watts"] as? NSNumber)?.doubleValue
             s.adapterName = (ad["Name"] as? String)?.trimmingCharacters(in: .whitespaces)
         }
-        if s.onAC { s.adapterContractWatts = Self.adapterContractWatts() }
+        // One registry read for everything `AppleSmartBattery` knows.
+        if let p = Self.smartBatteryProperties() {
+            s.systemLoadWatts = Self.systemLoadWatts(p)
+            if s.onAC { s.adapterContractWatts = Self.adapterContractWatts(p) }
 
-        // Signed battery power. Sandbox-safe path first, raw registry as the richer fallback.
-        if let (mA, mV, mAh) = Self.batteryCurrentAndVoltage() {
-            s.batteryWatts = (mA / 1000.0) * (mV / 1000.0)
-            // IOPS withholds `TimeToEmpty` for the first minute off the charger
-            // and any time the draw is still jumping, and a battery with no
-            // estimate is exactly when you look. Charge over current is the same
-            // arithmetic without the smoothing, so it only fills the gap.
-            if s.minutesToEmpty == nil, !s.onAC, mA < -1, mAh > 0 {
-                s.minutesToEmpty = Int(mAh / -mA * 60)
+            if let (mA, mV, mAh) = Self.batteryCurrentAndVoltage(p) {
+                var watts = (mA / 1000.0) * (mV / 1000.0)
+                // Amperage reads exactly 0 for a while right after unplugging —
+                // the gauge has not caught up — and that read as "-0.0 W" on a
+                // pack visibly running the machine. Off AC the pack is the only
+                // source, so the measured system load *is* its draw. Only then:
+                // any non-zero amperage wins, as it always did, and a firmware
+                // without `SystemLoad` keeps the amperage reading.
+                let gaugeIdle = !s.onAC && mA == 0
+                if gaugeIdle, let load = s.systemLoadWatts {
+                    watts = -load
+                }
+                s.batteryWatts = watts
+                // IOPS withholds `TimeToEmpty` for the first minute off the
+                // charger and any time the draw is still jumping, and a battery
+                // with no estimate is exactly when you look. Charge over current
+                // is the same arithmetic without the smoothing, so it only fills
+                // the gap. The amperage path is the original one; the load path
+                // only covers the idle gauge above.
+                if s.minutesToEmpty == nil, !s.onAC, mAh > 0 {
+                    if mA < -1 {
+                        s.minutesToEmpty = Int(mAh / -mA * 60)
+                    } else if gaugeIdle, watts < -0.1, mV > 0 {
+                        let drawMA = -watts / (mV / 1000.0) * 1000.0
+                        s.minutesToEmpty = Int(mAh / drawMA * 60)
+                    }
+                }
+            }
+
+            if let (health, cycles) = Self.batteryHealth(p) {
+                s.healthPercent = health
+                s.cycleCount = cycles
             }
         }
 
-        if let (health, cycles) = Self.batteryHealth() {
-            s.healthPercent = health
-            s.cycleCount = cycles
-        }
-
         power = s
+    }
+
+    private static func smartBatteryProperties() -> [String: Any]? {
+        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard svc != 0 else { return nil }
+        defer { IOObjectRelease(svc) }
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS
+        else { return nil }
+        return props?.takeRetainedValue() as? [String: Any]
+    }
+
+    /// A battery key from the top level, else from `BatteryData`. macOS 27 moved
+    /// the capacity keys (`DesignCapacity`, `NominalChargeCapacity`,
+    /// `AppleRawMaxCapacity`) under `BatteryData`, so a top-level-only read found
+    /// nothing. The top level is still asked first: that is where every earlier
+    /// macOS keeps them, and it must keep reading them from there.
+    private static func batteryNumber(_ p: [String: Any], _ key: String) -> NSNumber? {
+        p[key] as? NSNumber ?? (p["BatteryData"] as? [String: Any])?[key] as? NSNumber
+    }
+
+    /// `PowerTelemetryData.SystemLoad`, in mW: the firmware's measured draw of
+    /// the whole machine. Measured, unlike the adapter rating the System row
+    /// used to subtract from. Nil where the key is missing, so those Macs keep
+    /// the old derivation in `PowerSample.systemWatts`.
+    private static func systemLoadWatts(_ p: [String: Any]) -> Double? {
+        guard let mW = ((p["PowerTelemetryData"] as? [String: Any])?["SystemLoad"] as? NSNumber)?
+                .doubleValue, mW > 0 else { return nil }
+        return mW / 1000
     }
 
     /// Pack health as a percentage of its design capacity, plus the cycle count
@@ -359,18 +411,12 @@ final class Telemetry {
     /// `AppleRawMaxCapacity` is the older key and drifts from it on Apple
     /// silicon, so it is only the fallback — a machine publishing neither gets
     /// no row rather than a wrong one.
-    private static func batteryHealth() -> (Int, Int)? {
-        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard svc != 0 else { return nil }
-        defer { IOObjectRelease(svc) }
-        var props: Unmanaged<CFMutableDictionary>?
-        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-              let p = props?.takeRetainedValue() as? [String: Any],
-              let design = (p["DesignCapacity"] as? NSNumber)?.doubleValue, design > 0,
-              let now = (p["NominalChargeCapacity"] as? NSNumber
-                         ?? p["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue, now > 0
+    private static func batteryHealth(_ p: [String: Any]) -> (Int, Int)? {
+        guard let design = batteryNumber(p, "DesignCapacity")?.doubleValue, design > 0,
+              let now = (batteryNumber(p, "NominalChargeCapacity")
+                         ?? batteryNumber(p, "AppleRawMaxCapacity"))?.doubleValue, now > 0
         else { return nil }
-        let cycles = (p["CycleCount"] as? NSNumber)?.intValue ?? 0
+        let cycles = batteryNumber(p, "CycleCount")?.intValue ?? 0
         return (Int((now / design * 100).rounded()), cycles)
     }
 
@@ -378,14 +424,8 @@ final class Telemetry {
     /// does not tell you — a 35W charger on a port sharing its lane settles at
     /// 27W. Only `AppleSmartBattery`'s `AdapterDetails` carries the negotiated
     /// voltage and current; the IOPS adapter dictionary stops at the rating.
-    private static func adapterContractWatts() -> Double? {
-        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard svc != 0 else { return nil }
-        defer { IOObjectRelease(svc) }
-        var props: Unmanaged<CFMutableDictionary>?
-        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-              let p = props?.takeRetainedValue() as? [String: Any],
-              let ad = p["AdapterDetails"] as? [String: Any],
+    private static func adapterContractWatts(_ p: [String: Any]) -> Double? {
+        guard let ad = p["AdapterDetails"] as? [String: Any],
               let mV = (ad["Voltage"] as? NSNumber)?.doubleValue,
               let mA = (ad["Current"] as? NSNumber)?.doubleValue,
               mV > 0, mA > 0 else { return nil }
@@ -394,16 +434,15 @@ final class Telemetry {
 
     /// Returns (milliamps signed, millivolts, charge left in mAh — 0 if the
     /// firmware does not publish it).
-    private static func batteryCurrentAndVoltage() -> (Double, Double, Double)? {
-        let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard svc != 0 else { return nil }
-        defer { IOObjectRelease(svc) }
-        var props: Unmanaged<CFMutableDictionary>?
-        guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-              let p = props?.takeRetainedValue() as? [String: Any],
-              let mV = (p["Voltage"] as? NSNumber)?.doubleValue else { return nil }
-        let raw = (p["InstantAmperage"] as? NSNumber ?? p["Amperage"] as? NSNumber)?.doubleValue ?? 0
-        let signed = raw > 4e9 ? raw - 4294967296 : raw  // some firmwares report two's complement
+    private static func batteryCurrentAndVoltage(_ p: [String: Any]) -> (Double, Double, Double)? {
+        guard let mV = (p["Voltage"] as? NSNumber)?.doubleValue else { return nil }
+        // Two's complement either way. This firmware stores a negative current
+        // as a 64-bit unsigned (18446744073709550893 is -2723 mA), which
+        // `doubleValue` read as 1.8e19; `int64Value` takes the bits as signed.
+        // Older firmwares store it in 32 bits, which still needs folding back.
+        let bits = (p["InstantAmperage"] as? NSNumber ?? p["Amperage"] as? NSNumber)?.int64Value ?? 0
+        let signed = Double(bits > Int64(UInt32.max / 2) && bits <= Int64(UInt32.max)
+                            ? bits - Int64(UInt32.max) - 1 : bits)
         // `IsCharging` cannot supply the sign, in either direction. It reads
         // false through adapter negotiation, above ~95%, and for every top-off
         // pulse of a hold at full — so inverting a positive reading by it turned
@@ -416,8 +455,12 @@ final class Telemetry {
         // its sign. On AC the firmware's own sign stands.
         let external = (p["ExternalConnected"] as? Bool) ?? true
         // `AppleRawCurrentCapacity` is mAh; the plain `CurrentCapacity` on this
-        // node is a percentage, which would read as a nearly flat pack.
-        let mAh = (p["AppleRawCurrentCapacity"] as? NSNumber)?.doubleValue ?? 0
+        // node is a percentage, which would read as a nearly flat pack. macOS 27
+        // dropped the raw key and keeps the mAh as `BatteryData.RemainingCapacity`;
+        // the raw key is still asked first for every earlier macOS.
+        let mAh = (p["AppleRawCurrentCapacity"] as? NSNumber
+                   ?? (p["BatteryData"] as? [String: Any])?["RemainingCapacity"] as? NSNumber)?
+            .doubleValue ?? 0
         return (external ? signed : -abs(signed), mV, mAh)
     }
 
@@ -461,14 +504,7 @@ final class Telemetry {
         let busy = Double((t.user - prev.user) + (t.sys - prev.sys) + (t.nice - prev.nice))
         let idle = Double(t.idle - prev.idle)
         guard busy + idle > 0 else { return nil }
-        let pct = busy / (busy + idle) * 100
-
-        let now = Date()
-        let elapsed = lastCPUSampleAt.map { now.timeIntervalSince($0) } ?? 0
-        lastCPUSampleAt = now
-        cpuSustainedSeconds = pct >= Self.sustainedCPUThreshold ? cpuSustainedSeconds + elapsed : 0
-
-        return pct
+        return busy / (busy + idle) * 100
     }
 
     // MARK: Network
