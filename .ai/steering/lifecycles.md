@@ -100,6 +100,44 @@ there gets dropped off the notch. That is the price of ending cancelled runs
 without the grant, and it is the right trade — the alternative was an Activity
 that sat in the notch until the next build started.
 
+## Meetings
+
+A meeting is an Activity with no owner that reports it, so Vitals has to infer
+its lifecycle — and the inference is push-only. While it runs it is the resting
+state like any other Activity: the newest of the running Activities and the
+meeting owns the notch, an Xcode build with only the toolbar counter (no start
+time) outranks it, and the meeting returns when that ends.
+
+- **Begin:** a CoreAudio listener on the process object list and on each
+  process's `kAudioProcessPropertyIsRunningInput`. macOS calls back when a
+  process opens or closes an input stream; nothing runs, and nothing wakes,
+  while no one has the microphone. No timer.
+- **Identify:** only when a supported app starts capturing:
+  - A browser (Chrome, Arc, Safari) needs a tab on `meet.google.com/<code>` —
+    a Google Meet call — or on `slack.com/huddle` — a Slack Huddle in the
+    browser — found with one `osascript` call; with neither, the capture is some
+    other page and no meeting is declared. That lookup is also what vouches for
+    Safari, whose capture runs in WebKit processes every WebKit app shares. A
+    browser that finds nothing is not asked again for 30 seconds.
+  - A native app (Slack, FaceTime, Discord) is a call as soon as it captures.
+    Its window title names the room, read through the Accessibility grant the
+    Xcode watcher already uses, with a plain fallback ("Huddle", "FaceTime
+    call", "Voice call") when it cannot be read.
+- **Confirm:** the capture must still be open after a short settle, so a
+  voice-message clip in Slack never becomes a meeting.
+- **End:** the capture closes and stays closed through a grace period, so a
+  device switch or a rejoin does not flicker the notch. No polling of tabs
+  or windows while a meeting runs. The elapsed time is the stored start date;
+  only the open panel draws a clock.
+- **Return:** clicking the Meeting page, for a browser call, runs one more
+  `osascript` call that finds the tab by its URL (not a remembered index — tabs
+  move) and selects it, raises its window and activates the browser. A native
+  app raises its call window over Accessibility and activates the app.
+
+The one permission this adds is Automation for each browser, asked the first
+time that browser is used to identify a meeting. The native apps need nothing beyond the existing Accessibility
+row, and without it the click only brings the app forward.
+
 ## Extensions
 
 Extensions are concurrent conditions, not queued states. Each records its

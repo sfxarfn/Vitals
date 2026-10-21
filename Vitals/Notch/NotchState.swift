@@ -45,6 +45,10 @@ enum NotchState: Equatable {
     case building(XcodeBuildActivity)
     /// Long-running work reported explicitly by the process doing it.
     case externalActivity(ExternalActivity)
+    /// A Meet call or Slack Huddle is live. You joined it and it ends when you
+    /// leave, so it is the resting state for as long as it lasts: a video
+    /// glyph on the left, the time on the call on the right.
+    case meeting(Meeting)
 
     // MARK: Interactions
 
@@ -124,6 +128,14 @@ struct NotchMetrics {
     /// is curving back in, and the outline takes 6–9pt of horizontal bite across
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
+    /// A live meeting: a 20pt glyph (its live dot hangs 2pt off the corner)
+    /// opposite the clock. The clock at 12pt is ~34pt for "24:31", plus
+    /// `notchPad`. Narrower than `verdictFlanks` because no word sits here, and
+    /// the two sides are rounded to one number — a lean of a few points would
+    /// read as a shape that failed to line up. Past an hour "1:02:33" is wider;
+    /// its `minimumScaleFactor` takes up the difference rather than the shape
+    /// growing under a call already in progress.
+    var meetingFlanks: Flanks = (42, 42)
     /// The panel. Wider than `statFlanks` because the paged slot below the
     /// housing has to hold a readout's hero tile and its four rows beside the
     /// summary column and both arrows; the flanks above simply hug inward.
@@ -219,6 +231,7 @@ struct NotchMetrics {
         case .building(let build):
             build.progress == nil ? verdictFlanks : statFlanks
         case .externalActivity: statFlanks
+        case .meeting: meetingFlanks
         // Paging swaps the slot, never the shape — these flanks are sized for
         // the widest slot: summary column, both arrows, a hero tile and rows.
         case .panel: panelFlanks

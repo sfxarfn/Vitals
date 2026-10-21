@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 /// Now Playing is the main page; which one the panel opens on is decided in
 /// one place, `openingPage`. Features sit side by side here; the stats'
 /// numbers are not pages, they are `PanelDetail`s. The arrows only go live,
-/// and the dots only appear, while there is a second case.
-enum PanelPage: CaseIterable { case nowPlaying, shelf }
+/// and the dots only appear, while there is a second case. Meeting is always a
+/// page; with no call it says so, and a live one is what makes it the opener.
+enum PanelPage: CaseIterable { case nowPlaying, shelf, meeting }
 
 /// The numbers behind a stat, opened from the stat itself — the die's flank or
 /// a summary tile — over whatever feature page was up. Not in the page cycle.
@@ -95,6 +96,8 @@ extension NotchView {
                                     }
                                 case .nowPlaying:
                                     nowPlayingPage
+                                case .meeting:
+                                    meetingPage
                                 }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -165,11 +168,13 @@ extension NotchView {
 
     /// The page a panel opens on, by context. A file in hand is headed for the
     /// shelf, and a shelf already holding something is why you came back —
-    /// both open on Shelf. Otherwise Now Playing, the main page. Decided fresh
-    /// on every open; the last page is not remembered across opens.
+    /// both open on Shelf. Failing that a live meeting, then Now Playing, the
+    /// floor. Decided fresh on every open; the last page is not remembered.
     var openingPage: PanelPage {
         let dragging = fileDrag != nil || NotchController.shared?.draggingFile == true
-        return dragging || !shelf.urls.isEmpty ? .shelf : .nowPlaying
+        if dragging || !shelf.urls.isEmpty { return .shelf }
+        // A live call outranks the music, never a file you are holding.
+        return meetings.meeting != nil ? .meeting : .nowPlaying
     }
 
     /// The slot as a fresh open finds it: the opening page, no detail.
@@ -300,9 +305,9 @@ extension NotchView {
     /// Walks the feature pages in order and wraps, so either arrow reaches all.
     private func pageArrow(by step: Int) -> some View {
         PageArrow(step: step, live: canPage, reduceMotion: reduceMotion) {
-            let pages = PanelPage.allCases
-            let here = pages.firstIndex(of: panelPage) ?? 0
-            panelPage = pages[(here + step + pages.count) % pages.count]
+            let walk = PanelPage.allCases
+            let here = walk.firstIndex(of: panelPage) ?? 0
+            panelPage = walk[(here + step + walk.count) % walk.count]
         }
     }
 

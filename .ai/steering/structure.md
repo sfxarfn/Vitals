@@ -101,6 +101,8 @@ recent Activity replaces Idle as the resting state.
 | `BuildWatcher.swift` | Watches DerivedData for build writes, enriches an Xcode build with a live task count where Accessibility allows, and ends a lifecycle Xcode never closed. |
 | `BuildPill.swift` | Renders a running Xcode build or archive. |
 | `ExternalActivityPill.swift` | Renders explicitly reported work without inventing progress. |
+| `MeetingWatcher.swift` | Infers a live call (Meet, Huddle, FaceTime, Discord) from microphone use, with no timer, and brings its window back. |
+| `MeetingPill.swift` | Renders a live meeting: video glyph with a live dot, and the time on the call. The panel's Meeting page is `Interactions/MeetingPage.swift`. |
 
 Xcode Behavior scripts own the authoritative build lifecycle. `BuildWatcher` has
 no switch and is always running; the Accessibility grant decides only whether the
@@ -114,7 +116,8 @@ surface.
 | File | Responsibility |
 |---|---|
 | `PeekView.swift` | Shows the two summary flanks and control row on hover. |
-| `PanelView.swift` | Provides the expanded panel, navigation, shelf, and AirDrop tile. |
+| `PanelView.swift` | Provides the expanded panel, navigation, shelf, and AirDrop tile. Decides the opening page: Shelf if it holds something or a file is in hand, else Meeting while a call is live, else Now Playing. |
+| `MeetingPage.swift` | The Meeting feature page: "No meeting", or the live call's app, room and clock, with the way back to its window. |
 | `BatteryReadout.swift` | Shares battery wording and values across Peek and Panel. |
 | `ThermalReadout.swift` | Shares die summaries and detailed thermal readings. |
 | `NetworkReadout.swift` | The panel behind peek's two rates: link rate, signal, band and VPN. |

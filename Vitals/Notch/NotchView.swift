@@ -105,6 +105,7 @@ struct NotchView: View {
     let thermalGlow: Signal?
     let shelf: Shelf
     let nowPlaying: NowPlaying
+    let meetings: MeetingWatcher
     /// Approach cue from the controller. Nil unless a file drag is near the
     /// housing and the panel has not taken the drop over yet.
     let fileDrag: FileDrag?
@@ -205,6 +206,7 @@ struct NotchView: View {
         case .vpn:                  15
         case .building:             5
         case .externalActivity:     13
+        case .meeting:              16
         case .panel:                7
         }
     }
@@ -522,6 +524,8 @@ struct NotchView: View {
             buildPill(build).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .externalActivity(let activity):
             externalActivityPill(activity).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .meeting(let meeting):
+            meetingPill(meeting).transition(.opacity.animation(.easeOut(duration: 0.2)))
 
         // Interactions.
         case .panel:

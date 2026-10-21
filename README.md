@@ -1,9 +1,85 @@
 # Vitals
 
-Vitals is a personal macOS notch surface for machine state and long-running
-work. It is installed on another Mac by copying a known-good `Vitals.app` from
-the original machine; the destination machine does not need the source code or
-Xcode to install it.
+**Your MacBook's notch, put to work.** Vitals turns the camera notch into an
+ambient status surface for macOS: silent at rest, a brief pill when something
+happens, and a full panel when you hover.
+
+It was built for one job — telling you what your Mac is doing *before* it
+costs you a build. On a fanless MacBook the die climbs, the clocks come down,
+and nothing on screen says so. Vitals says so, and everything else the notch
+can usefully say sits beside it.
+
+## What it shows
+
+The notch has three kinds of state, split by who acted and how the state ends.
+
+| | Who acted | How it ends |
+|---|---|---|
+| **Interactions** | You did | When you leave the shape |
+| **Events** | The machine did | On its own clock |
+| **Activities** | Work you started | When the work ends |
+
+**Hover** the notch for **Peek**: temperature, CPU and network at a glance.
+Open it into the **Panel**, a surface you can work in, with pages you flip
+through:
+
+- **Now Playing** — cover, title and artist, play/pause, and a timeline whose
+  times double as previous and next. Works with any player macOS can see.
+- **File Tray** — drop files on the notch to hold them, then hand them to
+  AirDrop.
+- **Meeting** — the call you're in, and the way back to it (see below).
+- **Battery, Thermal and Network detail** — open from the stats: battery in
+  numbers; where the die's heat sits and how much headroom is left before
+  throttling; link rate, signal, band, channel and VPN.
+
+**Events** are short pills for things that happen to the machine: battery
+charged or charging, thermal caution, throttling and cooling down, an accessory
+connecting (with its battery), audio falling off a headset onto the speakers,
+a VPN connecting, a new track, an Xcode build succeeding or failing, and
+anything you report yourself with `vitals-notify`. Heat also **glows** the
+notch's left edge until the machine is back to normal.
+
+**Activities** hold the notch for as long as the work runs: an Xcode build
+(with live task progress if you grant Accessibility), a live meeting, and any
+long-running command you report.
+
+**Extensions** accompany whatever is showing: today, a Claude icon while
+Claude Code is working a turn.
+
+### Meetings: find your way back to the call
+
+After sharing a screen or an hour in another window, the call you're in is
+buried. While one is live the notch shows a video glyph with a green dot and
+the time on the call, and the panel's **Meeting** page names it. Click the app
+tile or the room name and the exact window comes forward.
+
+| Call | Where | Return to the call |
+|---|---|---|
+| Google Meet | Chrome, Arc, Safari | selects the tab and raises its window |
+| Slack Huddle | Slack app, or Chrome / Arc / Safari | raises the call window or tab |
+| FaceTime | FaceTime app | raises the call window |
+| Discord | Discord app | raises the call window |
+
+Detection is push-only: macOS tells Vitals when an app opens the microphone,
+so nothing polls while you aren't on a call. It cannot see whether you're
+muted, so it doesn't show a mic state.
+
+## Requirements
+
+- A Mac with a notch, or **Settings → Show on external displays** to draw one
+  on any display
+- macOS 26 or later
+
+Vitals is a personal app: it is not on the App Store and is not notarized, and
+it cannot be sandboxed (reading Xcode's toolbar needs Accessibility, which a
+sandboxed app can never hold).
+
+## Get Vitals
+
+**Build it:** open `Vitals.xcodeproj` in Xcode and run the `Vitals` scheme.
+
+**Or copy a built app** from another Mac, following the install steps below.
+The destination Mac needs neither the source code nor Xcode.
 
 ## Installation
 
@@ -71,6 +147,15 @@ Open Vitals Settings by right-clicking the notch.
   macOS then asks once per app whether Vitals may control it — choose
   **Allow**. Turning it off later lives in **System Settings → Privacy &
   Security → Automation**.
+- **Meetings** (Google Meet and Slack Huddles in Chrome, Arc or Safari, and the
+  FaceTime, Slack and Discord apps) are detected from microphone use and need no
+  permission to be noticed. The first time a browser call is found, macOS asks
+  whether Vitals may control that browser — choose **Allow**; it is only used to
+  find the call's tab and bring it back when you click the Meeting page. A
+  native app's call window is raised through the Accessibility grant above;
+  without it the room name is generic and the click only brings the app
+  forward. Turning a browser's control off later lives in **System Settings →
+  Privacy & Security → Automation**.
 
 Command notifications—including Xcode Behavior lifecycles—power, thermal, CPU,
 and network telemetry do not depend on the Accessibility permission.

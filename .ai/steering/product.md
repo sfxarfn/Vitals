@@ -47,8 +47,19 @@ which subsystem is talking before you read anything.
 ### Interactions
 
 - **Peek** — the pointer rests on the notch and it answers with the stats worth a glance
-- **Panel** — peek opens downward into a surface you can actually work in
+- **Panel** — peek opens downward into a surface you can actually work in. It
+  opens on whichever page has something happening, in this order: **File Tray**
+  when it holds a file or one is being dragged in, then **Meeting** while a call
+  is live, then Now Playing as the floor. Decided fresh on every open; the last
+  page is not remembered.
   - **File Tray** — a drop box that holds files and hands them to AirDrop
+  - **Meeting** — a feature page, always there. With no call it says "No
+    meeting" and nothing else. It is the way back: after sharing a screen or an
+    hour in another window the call is buried under something, so the page names
+    it — app, room (the Meet code, or the call window's title) and elapsed time — and
+    clicking the app tile or the room brings that exact window forward. No
+    buttons, no source line: the tile and the name are the controls, and
+    hovering them underlines the name and slides a return arrow in on its left.
   - **Battery Status** — the numbers behind peek's one-line summary
   - **Thermal Detail** — the die behind peek's one rounded degree: where the
     heat sits (P-cores, E-cores, GPU), how many degrees are left before the
@@ -118,6 +129,18 @@ the notch falls to Idle if it finished meanwhile.
 - **Xcode**
   - **Build In Progress** — what is running; enriched with Xcode's live task
     count whenever the Accessibility grant allows the toolbar to be read
+- **Meeting**
+  - **Meeting In Progress** — a call is live: Google Meet or a Slack Huddle in
+    Chrome, Arc or Safari, or the FaceTime, Slack or Discord app. That app has
+    the microphone open and a room to name.
+    You joined it, and it ends when you leave, so it is work you started and
+    replaces Idle as the resting state while it lasts. Left flank: a video glyph
+    with a green live dot, centred between the bezel and the housing. Right
+    flank: the time on the call, `m:ss`, then `h:mm:ss`. No mic status — these apps hold the microphone open while you are
+    muted, so mute cannot be read, and a "mic on" would be true for the whole
+    call. It ends when the microphone closes; a call that proves otherwise is a
+    bug here, not a reason to poll. The Meeting page behind it is where the room
+    is named and reached.
 - **Commands**
   - **Reported Activity** — long-running work explicitly opens a lifecycle and
     closes it when done. It shows that it is running but invents no progress;

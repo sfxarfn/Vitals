@@ -257,7 +257,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Vitals shows what Music or Spotify is playing and lets you play, pause and skip from the notch.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Vitals shows what Music or Spotify is playing and lets you play, pause and skip from the notch, and finds your Google Meet or Slack Huddle tab in Chrome, Arc or Safari so it can take you back to the call.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Vitals reads the battery level of accessories you connect.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -310,7 +310,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Vitals shows what Music or Spotify is playing and lets you play, pause and skip from the notch.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Vitals shows what Music or Spotify is playing and lets you play, pause and skip from the notch, and finds your Google Meet or Slack Huddle tab in Chrome, Arc or Safari so it can take you back to the call.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Vitals reads the battery level of accessories you connect.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

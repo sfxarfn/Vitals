@@ -79,18 +79,21 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`BuildWatcher.swift`](../Vitals/Activities/BuildWatcher.swift) | The DerivedData FSEvent gate, Xcode build/archive progress scraped off the toolbar over the Accessibility API, and the cancel fallback. Always on, no setting. Xcode Behaviors own lifecycle and verdict; the grant only decides whether the task count is there. |
 | [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws. |
 | [`ExternalActivityPill.swift`](../Vitals/Activities/ExternalActivityPill.swift) | How explicitly reported long-running work draws when it has a lifecycle but no invented progress counter. |
+| [`MeetingWatcher.swift`](../Vitals/Activities/MeetingWatcher.swift) | Finds a live call — Google Meet or a Slack Huddle in Chrome, Arc or Safari, or the FaceTime, Slack or Discord app — from CoreAudio per-process microphone listeners — push-only, no timer — and brings its window back. Its lifecycle is the `.meeting` Activity, the resting state while a call runs. |
+| [`MeetingPill.swift`](../Vitals/Activities/MeetingPill.swift) | How a live meeting draws: video glyph with a green live dot, centred, on the left; the time on the call on the right. |
 
 ### `Interactions/` — you reached for it
 
 | File | Role |
 |---|---|
-| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel — what hover opens: the two stat flanks, the summary column, `PanelPage`'s feature pages behind two arrows and the dots (hidden while Shelf is the only one), the `PanelDetail` readouts the stats open over them, the shelf and the AirDrop strip. |
+| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel — what hover opens: the two stat flanks, the summary column, `PanelPage`'s feature pages behind two arrows and the dots (hidden while Shelf is the only one; opens on Shelf if it holds something or a file is in hand, else Meeting while a call is live, else Now Playing), the `PanelDetail` readouts the stats open over them, the shelf and the AirDrop strip. |
 | [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers: the summary column's value ("AC" on wall power) and the battery page. |
 | [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — throttle headroom, memory, and whichever temperatures the chip is willing to name (M1 splits its die three ways; M2/M3 do not). |
 | [`NetworkReadout.swift`](../Vitals/Interactions/NetworkReadout.swift) | The link, same way: peek's two rates opened into what carries them — link rate, signal, band and channel, and whether a VPN has it. Names the interface, never the network: the SSID costs a Location prompt. |
 | [`Shelf.swift`](../Vitals/Interactions/Shelf.swift) | The drop box and the AirDrop plumbing. |
 | [`NowPlaying.swift`](../Vitals/Interactions/NowPlaying.swift) | Now Playing, read through ungive/mediaremote-adapter: Apple-signed `/usr/bin/perl` still holds the MediaRemote entitlement third-party apps lost in macOS 15.4. One stream for the life of the app (measured: idle perl at 0% CPU, ~33 MB), which also feeds the track-change pill; Music and Spotify over `osascript` if the adapter keeps dying. |
 | [`NowPlayingPage.swift`](../Vitals/Interactions/NowPlayingPage.swift) | The panel's second feature page: artwork (click opens the player), title, artist, a progress hairline and the transport buttons. |
+| [`MeetingPage.swift`](../Vitals/Interactions/MeetingPage.swift) | The panel's third feature page, always present — "No meeting" until a call is live — it then outranks Now Playing as the opening page, but never a held or stored file: app tile, room and clock. Tile and name are one button that returns to the call. |
 | [`MediaRemoteAdapter/`](../Vitals/Interactions/MediaRemoteAdapter) | The vendored adapter (BSD 3-Clause, licence beside it). The library ships zipped and is unpacked into Caches at runtime — Xcode recognises a Mach-O by its contents and links it whatever its extension, which made dyld abort at launch; rebuild it with [`tools/build-mediaremote-adapter.sh`](../tools/build-mediaremote-adapter.sh). |
 
 ### `Extensions/` — concurrent conditions

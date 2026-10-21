@@ -24,6 +24,7 @@ final class NotchController {
     let telemetry = Telemetry()
     let shelf = Shelf()
     let nowPlaying = NowPlaying()
+    let meetings = MeetingWatcher()
     /// Where a file drag sits relative to the housing. Nil the moment the drag
     /// leaves or ends — a leftover value would keep the silhouette animating
     /// for the rest of the day.
@@ -154,6 +155,14 @@ final class NotchController {
             queue.append(.trackChange(change))
             presentNext()
         }
+
+        // A meeting is an Activity the watcher infers: it replaces idle as the
+        // resting state and hands it back when the call ends.
+        meetings.onChange = { [weak self] _ in
+            guard let self, self.atRest else { return }
+            state = resting
+        }
+        meetings.start()
 
         commands.start { [weak self] command in self?.handle(command) }
 
@@ -389,13 +398,18 @@ final class NotchController {
         // A Behavior lifecycle supplies the stable start/end underneath. The
         // newest explicit Activity still owns the notch, but an Xcode one gets
         // the dedicated build presentation whether AX progress answers or not.
-        if let explicit = externalActivities.values.max(by: { $0.startedAt < $1.startedAt }) {
+        let call = meetings.meeting
+        if let explicit = externalActivities.values.max(by: { $0.startedAt < $1.startedAt }),
+           call.map({ $0.startedAt < explicit.startedAt }) ?? true {
             if isXcodeBuildActivity(explicit.name) { return xcodeBuildState() }
             return .externalActivity(explicit)
         }
+        // A build the toolbar counter alone reports has no start time to rank
+        // by, and it is what you are waiting on, so it outranks a call.
         if let build = builds.progress {
             return xcodeBuildState(progress: build)
         }
+        if let call { return .meeting(call) }
         return .idle
     }
 
@@ -439,7 +453,7 @@ final class NotchController {
 
     private var atRest: Bool {
         switch state {
-        case .idle, .building, .externalActivity: true
+        case .idle, .building, .externalActivity, .meeting: true
         default: false
         }
     }
@@ -983,6 +997,7 @@ private struct NotchRoot: View {
                   thermalGlow: controller.thermalGlow,
                   shelf: controller.shelf,
                   nowPlaying: controller.nowPlaying,
+                  meetings: controller.meetings,
                   fileDrag: controller.fileDrag,
                   endFileDrag: controller.endFileDrag,
                   airDrop: controller.airDrop,
