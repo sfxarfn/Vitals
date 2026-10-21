@@ -108,10 +108,22 @@ state like any other Activity: the newest of the running Activities and the
 meeting owns the notch, an Xcode build with only the toolbar counter (no start
 time) outranks it, and the meeting returns when that ends.
 
-- **Begin:** a CoreAudio listener on the process object list and on each
-  process's `kAudioProcessPropertyIsRunningInput`. macOS calls back when a
-  process opens or closes an input stream; nothing runs, and nothing wakes,
-  while no one has the microphone. No timer.
+- **Begin:** CoreAudio listeners on the default input device
+  (`kAudioDevicePropertyDeviceIsRunningSomewhere`), on the process object list,
+  and on each process's `kAudioProcessPropertyIsRunningInput`. macOS calls back
+  when a process starts or stops capturing, and each notification looks at once
+  and again 400ms later, because one can arrive before the property it
+  announces reads back its new value.
+- **Safety net:** measured on a real call, those notifications sometimes never
+  arrive on a join — Vitals only saw the call when something else changed the
+  process list. So a two-second timer re-reads the same flags. It touches
+  CoreAudio properties only, never tabs, windows or `osascript`, and only for
+  the handful of processes that are one of the watched apps — each process's
+  bundle ID is read once and cached, so a tick is the process-list query plus a
+  few flag reads — and the real work (the tab lookup) still runs
+  only once an app is capturing. This is the same trade CPU monitoring makes:
+  where macOS offers no dependable push, a cheap read on a slack timer is the
+  price.
 - **Identify:** only when a supported app starts capturing:
   - A browser (Chrome, Arc, Safari) needs a tab on `meet.google.com/<code>` —
     a Google Meet call — or on `slack.com/huddle` — a Slack Huddle in the
@@ -123,12 +135,16 @@ time) outranks it, and the meeting returns when that ends.
     Its window title names the room, read through the Accessibility grant the
     Xcode watcher already uses, with a plain fallback ("Huddle", "FaceTime
     call", "Voice call") when it cannot be read.
-- **Confirm:** the capture must still be open after a short settle, so a
-  voice-message clip in Slack never becomes a meeting.
-- **End:** the capture closes and stays closed through a grace period, so a
-  device switch or a rejoin does not flicker the notch. No polling of tabs
-  or windows while a meeting runs. The elapsed time is the stored start date;
-  only the open panel draws a clock.
+- **Confirm:** only Slack waits — a couple of seconds, so a voice-message clip
+  on the same microphone never becomes a meeting. A browser has its call tab to
+  vouch for it, and FaceTime and Discord only capture on a call, so none of
+  those waits: the notch says so as the call starts. The tab lookup asks each
+  window for all its URLs in one Apple Event, so many tabs do not slow it.
+- **End:** the capture closes and stays closed for two seconds, so a device
+  switch (which closes and reopens the stream in under one) does not flicker the
+  notch, while a call you left clears at once. No polling of tabs or windows
+  while a meeting runs. The elapsed time is the stored start date; the clock is
+  only drawn while the notch or the Meeting page is on screen.
 - **Return:** clicking the Meeting page, for a browser call, runs one more
   `osascript` call that finds the tab by its URL (not a remembered index — tabs
   move) and selects it, raises its window and activates the browser. A native

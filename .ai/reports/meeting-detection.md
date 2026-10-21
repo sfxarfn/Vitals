@@ -13,9 +13,10 @@
 - `.ai/steering/*`, `.ai/README.md`, `README.md` — Meeting documented as an Activity plus a panel page; permissions and a product-style README front section added.
 
 ## Verification
-- Nothing was built or run (project rule: the user builds in Xcode). Compile errors are possible, particularly in the CoreAudio calls.
-- Still to check on a real call: Meet staying live while muted, the Slack browser Huddle URL (`slack.com/huddle`), Slack/FaceTime/Discord window-title matches, Arc tab lookup across Spaces, Safari Automation prompt.
-
+- Run by the user in Xcode, read back from the unified log (subsystem `com.polkka.Vitals`, category `meeting`): a Meet join in Chrome was identified 0.16s after Chrome's microphone opened; a leave cleared the meeting 2.4s after the microphone closed (2s end grace).
+- Per-process and input-device listeners were measured missing joins, so a 2-second flag read backs them up (`lifecycles.md`).
+- Fixed after first run: the tab-scan AppleScript used `tab` inside `tell Chrome` (the browser's tab class), which made it fail.
+- Not verified: Arc, Safari, FaceTime, Discord, Slack Huddle (app and browser), and Meet staying live while muted beyond the one Chrome call.
 ## Notes
 - Meeting was first built as an Extension, then moved to an Activity once it needed two flanks.
 - No mic state is shown: mute cannot be read, since these apps hold the microphone open while muted.
