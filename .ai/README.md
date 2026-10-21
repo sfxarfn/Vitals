@@ -80,7 +80,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`BuildPill.swift`](../Vitals/Activities/BuildPill.swift) | How a running build draws. |
 | [`ExternalActivityPill.swift`](../Vitals/Activities/ExternalActivityPill.swift) | How explicitly reported long-running work draws when it has a lifecycle but no invented progress counter. |
 | [`MeetingWatcher.swift`](../Vitals/Activities/MeetingWatcher.swift) | Finds a live call — Google Meet or a Slack Huddle in Chrome, Arc or Safari, or the FaceTime, Slack or Discord app — from CoreAudio per-process microphone listeners — push-only, no timer — and brings its window back. Its lifecycle is the `.meeting` Activity, the resting state while a call runs. |
-| [`MeetingPill.swift`](../Vitals/Activities/MeetingPill.swift) | How a live meeting draws: video glyph with a green live dot, centred, on the left; the time on the call on the right. |
+| [`MeetingPill.swift`](../Vitals/Activities/MeetingPill.swift) | How a live meeting draws: the call app's icon (a video glyph for Meet) with a green live dot, centred, on the left; the time on the call on the right. |
 
 ### `Interactions/` — you reached for it
 

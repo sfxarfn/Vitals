@@ -102,7 +102,7 @@ recent Activity replaces Idle as the resting state.
 | `BuildPill.swift` | Renders a running Xcode build or archive. |
 | `ExternalActivityPill.swift` | Renders explicitly reported work without inventing progress. |
 | `MeetingWatcher.swift` | Infers a live call (Meet, Huddle, FaceTime, Discord) from microphone use, with no timer, and brings its window back. |
-| `MeetingPill.swift` | Renders a live meeting: video glyph with a live dot, and the time on the call. The panel's Meeting page is `Interactions/MeetingPage.swift`. |
+| `MeetingPill.swift` | Renders a live meeting: the call app's icon with a live dot, and the time on the call. The panel's Meeting page is `Interactions/MeetingPage.swift`. |
 
 Xcode Behavior scripts own the authoritative build lifecycle. `BuildWatcher` has
 no switch and is always running; the Accessibility grant decides only whether the

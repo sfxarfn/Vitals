@@ -1,6 +1,28 @@
+import AppKit
 import SwiftUI
 
 extension NotchView {
+    /// The call's own app: Meet has no app of its own, so it is a video glyph;
+    /// every other call wears its app's real icon, so a glance says which one.
+    @ViewBuilder private func callMark(_ meeting: Meeting) -> some View {
+        switch meeting.tile {
+        case .meet:
+            Image(systemName: "video.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+        case .app:
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: meeting.iconBundleID) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .clipShape(RoundedRectangle(cornerRadius: 4.5))
+            } else {
+                Image(systemName: "headphones")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+
     /// A live call. The glyph says what, the green dot on its corner says it is
     /// live, and the clock says how long — all a glance needs, and nothing that could be
     /// wrong: the microphone's mute state cannot be read, so none is drawn.
@@ -8,9 +30,7 @@ extension NotchView {
     /// One clock, once a second, only while this state is the resting notch.
     func meetingPill(_ meeting: Meeting) -> some View {
         HStack(spacing: 0) {
-            Image(systemName: "video.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+            callMark(meeting)
                 .frame(width: 20, height: 20)
                 .overlay(alignment: .bottomTrailing) {
                     Circle().fill(Color.green).frame(width: 6, height: 6).offset(x: 2, y: 2)

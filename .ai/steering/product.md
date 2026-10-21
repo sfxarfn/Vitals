@@ -134,8 +134,9 @@ the notch falls to Idle if it finished meanwhile.
     Chrome, Arc or Safari, or the FaceTime, Slack or Discord app. That app has
     the microphone open and a room to name.
     You joined it, and it ends when you leave, so it is work you started and
-    replaces Idle as the resting state while it lasts. Left flank: a video glyph
-    with a green live dot, centred between the bezel and the housing. Right
+    replaces Idle as the resting state while it lasts. Left flank: the call app's
+    own icon — a video glyph for Meet, which has none — with a green live dot,
+    centred between the bezel and the housing. Right
     flank: the time on the call, `m:ss`, then `h:mm:ss`. No mic status — these apps hold the microphone open while you are
     muted, so mute cannot be read, and a "mic on" would be true for the whole
     call. It ends when the microphone closes; a call that proves otherwise is a
