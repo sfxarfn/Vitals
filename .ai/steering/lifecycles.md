@@ -14,6 +14,9 @@ CPU monitoring keeps the current in-process, adaptive polling approach in
   expanded. Give the timer tolerance so macOS can coalesce wake-ups.
 - Treat CPU as machine state: assert the right-edge glow only after load has
   remained above the sustained threshold, and clear it when load releases.
+- The die temperature sensors are the dearest read on that timer, so they run on
+  every third tick while the notch is expanded (about every 3 seconds) and on
+  every tick while it rests. A thermal-state change forces a read.
 - Continue using OS notifications where macOS offers them, such as power-source
   and thermal-state changes. There is no equivalent notification for crossing a
   machine-wide CPU-load threshold, so CPU remains the part that must be polled.

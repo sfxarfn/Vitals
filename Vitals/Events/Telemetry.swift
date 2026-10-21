@@ -272,7 +272,7 @@ final class Telemetry {
         // the transition instead of waiting for the next timer tick.
         NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.sampleStall(); self?.onUpdate?() }
+        ) { [weak self] _ in self?.sampleStall(force: true); self?.onUpdate?() }
 
         // Push: power sources.
         let ctx = Unmanaged.passUnretained(self).toOpaque()
@@ -466,14 +466,29 @@ final class Telemetry {
 
     // MARK: Stall risk
 
-    private func sampleStall() {
+    /// The die sensors are the dearest read on the timer — an IOHID sweep, many
+    /// times the cost of the CPU counters — and a die moves in degrees over
+    /// seconds. With the notch grown the timer ticks every second for the CPU's
+    /// sake; the sensors are read on every third of those. A thermal transition
+    /// forces a read, so an Event never explains itself with a stale degree.
+    private static let temperatureInterval: TimeInterval = 2.5
+    private var lastTemperatureRead = Date.distantPast
+
+    private func sampleStall(force: Bool = false) {
         var s = StallSample()
         s.cpuPercent = cpuPercent() ?? stall.cpuPercent
-        // Keep the last good split rather than blanking the panel on a tick where
-        // every sensor happened to decline — same reason `samplePower` holds.
-        let groups = Self.temperature?.read() ?? [:]
-        s.dieGroups = groups.isEmpty ? stall.dieGroups : groups
-        s.tempC = groups.filter { $0.key.isDie }.values.max() ?? stall.tempC
+        if force || Date().timeIntervalSince(lastTemperatureRead) >= Self.temperatureInterval {
+            lastTemperatureRead = Date()
+            // Keep the last good split rather than blanking the panel on a tick
+            // where every sensor happened to decline — same reason `samplePower`
+            // holds.
+            let groups = Self.temperature?.read() ?? [:]
+            s.dieGroups = groups.isEmpty ? stall.dieGroups : groups
+            s.tempC = groups.filter { $0.key.isDie }.values.max() ?? stall.tempC
+        } else {
+            s.dieGroups = stall.dieGroups
+            s.tempC = stall.tempC
+        }
         stall = s
         thermalState = ProcessInfo.processInfo.thermalState
         memory = Self.memorySample() ?? memory

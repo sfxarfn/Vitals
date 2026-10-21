@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The panel's Now Playing page: the artwork, what it is and who by, one
@@ -88,8 +89,18 @@ extension NotchView {
             .frame(width: 42, height: 42)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
-            .shadow(color: (nowPlaying.artworkTint ?? .clear).opacity(track.playing ? 0.55 : 0),
-                    radius: 8)
+            // The cover's glow, drawn as a gradient rather than a blurred
+            // shadow: a blur is an offscreen pass the GPU repeats whenever the
+            // layer repaints, a radial fill is one cheap draw.
+            .background {
+                if track.playing, let tint = nowPlaying.artworkTint {
+                    Circle()
+                        .fill(RadialGradient(colors: [tint.opacity(0.5), tint.opacity(0)],
+                                             center: .center, startRadius: 16, endRadius: 36))
+                        .frame(width: 72, height: 72)
+                        .transition(.opacity)
+                }
+            }
             .scaleEffect(resting ? 0.9 : 1)
             .opacity(track.playing ? 1 : 0.7)
             .animation(.spring(response: 0.4, dampingFraction: 0.7), value: track.playing)
@@ -148,10 +159,11 @@ extension NotchView {
 
     /// Elapsed, the line, remaining — and the two times are the skip buttons.
     /// Hovering a time turns it into its arrow; both share one fixed box, so
-    /// the line between never changes width. One clock drives all three, twice
-    /// a second while playing, one still frame when paused.
+    /// the line between never changes width. One clock drives all three, once
+    /// a second while playing — the times only change per second, and the line
+    /// glides between ticks — one still frame when paused.
     private func timeline(_ track: NowPlayingTrack) -> some View {
-        TimelineView(.periodic(from: .now, by: track.playing ? 0.5 : 3600)) { context in
+        TimelineView(.periodic(from: .now, by: track.playing ? 1 : 3600)) { context in
             let at = track.position(at: context.date)
             let duration = track.duration.flatMap { $0 > 0 ? $0 : nil }
             let fraction: Double = {
@@ -172,7 +184,7 @@ extension NotchView {
                         Capsule().fill(.white.opacity(0.15))
                         Capsule().fill((nowPlaying.artworkTint ?? .white).opacity(0.9))
                             .frame(width: proxy.size.width * fraction)
-                            .animation(reduceMotion ? nil : .linear(duration: 0.5), value: fraction)
+                            .animation(reduceMotion ? nil : .linear(duration: 1), value: fraction)
                     }
                     .frame(maxHeight: .infinity)
                 }
@@ -243,37 +255,98 @@ private struct TimeSkipButton: View {
 /// Three bars beside the title that move while something plays and lie flat
 /// when it stops — the page's pulse. Not the audio's real levels (MediaRemote
 /// does not publish them), just three out-of-step waves, which is all a glance
-/// needs. Driven by the animation clock only while playing; Reduce Motion
-/// holds them still at mid height. Shared with the track-change pill.
+/// needs. Reduce Motion holds them still at mid height. Shared with the
+/// track-change pill.
+///
+/// The bars are Core Animation layers, not SwiftUI views. Both SwiftUI ways of
+/// moving them were measured and both cost more than the page deserves: a
+/// `repeatForever` animation is stepped by SwiftUI on every display frame, and a
+/// capped `TimelineView` still re-lays-out and re-renders the whole hosting view
+/// on each tick — about 10% CPU in a Debug build either way. A layer animation
+/// runs on the render server and costs the app nothing per frame.
 struct EqualizerBars: View {
     let playing: Bool
     let reduceMotion: Bool
     let tint: Color
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: !playing || reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(0..<3, id: \.self) { i in
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: 2, height: height(i, at: t))
-                }
-            }
-            .frame(width: 9, height: 9, alignment: .bottom)
+        EqualizerLayers(playing: playing, reduceMotion: reduceMotion, tint: NSColor(tint))
+            .frame(width: 9, height: 9)
+            .opacity(playing ? 1 : 0.5)
+            .animation(.easeOut(duration: 0.25), value: playing)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct EqualizerLayers: NSViewRepresentable {
+    let playing: Bool
+    let reduceMotion: Bool
+    let tint: NSColor
+
+    func makeNSView(context: Context) -> EqualizerNSView { EqualizerNSView() }
+
+    func updateNSView(_ view: EqualizerNSView, context: Context) {
+        view.update(playing: playing, reduceMotion: reduceMotion, tint: tint)
+    }
+}
+
+/// Three 2×9pt bars, bottom-anchored, scaled in height. Out of step: a different
+/// peak and period each, so no two move together.
+private final class EqualizerNSView: NSView {
+    private static let rest: CGFloat = 2.0 / 9
+    private static let still: CGFloat = 5.0 / 9
+    private static let swings: [(peak: CGFloat, period: Double)] = [(0.9, 0.32), (1.0, 0.46), (0.72, 0.39)]
+
+    private let bars: [CALayer] = (0..<3).map { _ in CALayer() }
+    private var moving = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        for (i, bar) in bars.enumerated() {
+            bar.bounds = CGRect(x: 0, y: 0, width: 2, height: 9)
+            bar.cornerRadius = 1
+            // Grows up from its foot rather than out from its middle.
+            bar.anchorPoint = CGPoint(x: 0.5, y: 0)
+            bar.position = CGPoint(x: 1 + CGFloat(i) * 3.5, y: 0)
+            layer?.addSublayer(bar)
         }
-        .opacity(playing ? 1 : 0.5)
-        .animation(.easeOut(duration: 0.25), value: playing)
-        .accessibilityHidden(true)
     }
 
-    private func height(_ bar: Int, at t: Double) -> CGFloat {
-        guard playing else { return 2 }
-        guard !reduceMotion else { return 5 }
-        let speeds = [5.1, 7.3, 6.2]
-        let phases = [0.0, 1.7, 3.1]
-        let wave = (sin(t * speeds[bar] + phases[bar]) + 1) / 2   // 0…1
-        return 2 + CGFloat(wave) * 7
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 9, height: 9) }
+
+    func update(playing: Bool, reduceMotion: Bool, tint: NSColor) {
+        let shouldMove = playing && !reduceMotion
+        // The resting height: flat when stopped, mid height when motion is
+        // reduced. While the wave runs it overrides this model value.
+        let level = playing && reduceMotion ? Self.still : Self.rest
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for bar in bars {
+            bar.backgroundColor = tint.cgColor
+            bar.transform = CATransform3DMakeScale(1, level, 1)
+        }
+        CATransaction.commit()
+
+        guard shouldMove != moving else { return }
+        moving = shouldMove
+        if shouldMove {
+            for (i, bar) in bars.enumerated() {
+                let swing = Self.swings[i]
+                let wave = CABasicAnimation(keyPath: "transform.scale.y")
+                wave.fromValue = Self.rest
+                wave.toValue = swing.peak
+                wave.duration = swing.period
+                wave.autoreverses = true
+                wave.repeatCount = .infinity
+                wave.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                bar.add(wave, forKey: "wave")
+            }
+        } else {
+            for bar in bars { bar.removeAllAnimations() }
+        }
     }
 }
 
