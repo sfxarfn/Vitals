@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Glyphs SF Symbols does not ship, drawn by hand rather than looked up.
@@ -57,26 +58,19 @@ struct AirDropMark: Shape {
 /// them; the asset replaced it. `git log` has the shape if the pulse is wanted
 /// back, but it cannot be had on top of a bitmap.
 ///
-/// Its own view, so the loop lives on a `@State` that appears with the mark and
-/// dies with it. The notch's growth transaction only nils animations driven by
-/// its own key, so this keeps running through a state change underneath it.
+/// A Core Animation layer rather than a SwiftUI loop: it sits in the notch for
+/// as long as a turn lasts, and a SwiftUI `repeatForever` re-renders the whole
+/// hosting view every display frame — see `SpinLayers.swift`.
 struct ClaudeWorkingMark: View {
-    @State private var running = false
+    /// What `extensionTint` gives Claude. A layer takes no foreground style, so
+    /// the colour is passed in rather than inherited.
+    var tint: Color = .orange
 
     var body: some View {
         // The real burst, shipped as an asset rather than approximated: the
         // spokes are uneven in a way a generated ring is not, and the drawn
-        // version existed only because that was hard to reach by hand. Template
-        // asset, so `extensionTint` still colours it like every other mark.
-        Image("ClaudeLogo")
-            .resizable()
-            .scaledToFit()
-            // Scoped to the rotation alone. A plain `.animation(value:)` put
-            // the forever-loop on the whole transaction that flipped `running`,
-            // so the mark's position rode it too and slid in from the edge.
-            .animation(.linear(duration: 11).repeatForever(autoreverses: false)) {
-                $0.rotationEffect(.degrees(running ? 360 : 0))
-            }
-            .onAppear { running = true }
+        // version existed only because that was hard to reach by hand. A
+        // template asset, filled with the tint.
+        SpinningImage(name: "ClaudeLogo", tint: NSColor(tint), period: 11)
     }
 }

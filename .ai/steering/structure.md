@@ -74,6 +74,7 @@ category directory. State needed by those category views is declared on
 | `NotchView.swift` | Draws and animates the surface, glow, shadows, and state content. |
 | `NotchShape.swift` | Defines the outward-flaring notch outline. |
 | `Marks.swift` | Contains custom Bluetooth and AirDrop marks unavailable as SF Symbols. |
+| `SpinLayers.swift` | Core Animation layers for marks that turn for minutes (build ring, Claude burst); never a SwiftUI `repeatForever` on the resting notch. |
 | `CGSSpace.swift` | Keeps the panel attached across macOS space changes using private window-space APIs. |
 
 ### `Vitals/Events/` — the machine acted

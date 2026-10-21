@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// How the one Activity draws. Unlike an Event it is not passing through: it
@@ -97,21 +98,12 @@ extension NotchView {
 }
 
 /// A ring in the same 20pt footprint as determinate build progress. Only the
-/// arc turns: a long-running Activity should not pulse the whole notch.
+/// arc turns: a long-running Activity should not pulse the whole notch. A Core
+/// Animation layer, because this one sits on the resting notch for the whole
+/// build — see `SpinLayers.swift`.
 private struct XcodeBuildSpinner: View {
-    @State private var rotation = 0.0
-
     var body: some View {
-        Circle()
-            .trim(from: 0.08, to: 0.72)
-            .stroke(.blue, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-            // Scoped to the rotation alone. A `withAnimation` on appear put the
-            // forever-loop on the whole transaction, so the spinner's position
-            // rode it too and it drifted in instead of fading in with the pill.
-            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-                $0.rotationEffect(.degrees(rotation - 90))
-            }
+        SpinningArc(color: NSColor(.blue))
             .frame(width: 20, height: 20)
-            .onAppear { rotation = 360 }
     }
 }
