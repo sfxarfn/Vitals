@@ -288,14 +288,25 @@ final class NotchController {
 
         // The window must exist and be ordered in before it has a windowNumber.
         // Its own private space is what actually pins it during a space swipe;
-        // collectionBehavior alone cannot do this.
+        // collectionBehavior alone cannot do this. orderFront joins the active
+        // desktop, though, and that membership is what a swipe translates —
+        // `stick` takes it back. It has to happen *after* orderFront: done
+        // first, the order-front puts the panel straight back on the desktop.
         //
         // The space belongs to the display it was created on and cannot follow
         // the panel to another one — a window parked in it draws nowhere else,
         // which is exactly the "moved, but invisible" failure. On a synthetic
         // notch the panel gives the space up and leans on `.canJoinAllSpaces`
         // plus `repin` instead: swipe-proofing is the thing that gets traded.
-        space.windows = screen.auxiliaryTopLeftArea != nil ? [panel] : []
+        // orderFront is first on that path too. Once the panel has been taken
+        // off every desktop, releasing the space before ordering would leave
+        // it with no Space at all.
+        let claim: Set<NSWindow> = screen.auxiliaryTopLeftArea != nil ? [panel] : []
+        if space.windows == claim {
+            space.stick()
+        } else {
+            space.windows = claim
+        }
 
         #if DEBUG
         NSLog("Vitals notch → screen %@ notch %@ frame %@ space %@",
@@ -316,6 +327,9 @@ final class NotchController {
         place(window, screen: screen, notch: notch, display: false)
         self.screen = screen
         window.orderFrontRegardless()
+        // The Space change, and this order-front, both put the panel back on
+        // the desktop that just activated. Re-claim it before the next swipe.
+        space.stick()
     }
 
     /// The pointer crossing to another display takes the notch with it, but only
