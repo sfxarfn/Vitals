@@ -116,19 +116,27 @@ extension NotchView {
     /// Title and artist, keyed by the track so a change slides the new one up
     /// rather than swapping letters in place.
     private func titleBlock(_ track: NowPlayingTrack) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
+        let subtitle = track.artist.isEmpty ? track.album : track.artist
+        return VStack(alignment: .leading, spacing: 3) {
+            // On the first line's baseline, so a wrapped title keeps the bars
+            // beside its opening words rather than between its two lines.
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 EqualizerBars(playing: track.playing, reduceMotion: reduceMotion,
                               tint: nowPlaying.artworkTint ?? .white)
+                // A browser tab has no artist line, so its title takes the
+                // room instead of truncating beside an empty one.
                 Text(track.title)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
+                    .lineLimit(subtitle.isEmpty ? 2 : 1)
             }
-            Text(track.artist.isEmpty ? track.album : track.artist)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.55))
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
         }
-        .lineLimit(1)
         .id(track.title + "\u{0}" + track.artist)
         .transition(reduceMotion
             ? .opacity

@@ -123,6 +123,8 @@ final class NotchController {
     private static func duration(of state: NotchState) -> TimeInterval {
         switch state {
         case .trackChange, .vpn: return 2
+        // Long enough to read a sentence and watch the glow cross the edge.
+        case .agentFinished: return 6
         default: break
         }
         return eventDuration
@@ -451,6 +453,17 @@ final class NotchController {
             ending: ending))
     }
 
+    /// The agents' hooks report `claude-finished` and `cursor-finished` as plain
+    /// Command Events; those two names are drawn as the sentence, not as a
+    /// "Claude · Finished" flank pill. Anything else stays an `externalEvent`.
+    private func agentFinish(_ event: ExternalEvent) -> NotchState? {
+        guard event.outcome.lowercased() == "finished",
+              let agent = AgentFinish.Agent(rawValue: event.subject.lowercased()) else { return nil }
+        // Two finishes of one agent waiting at once are one piece of news.
+        queue.removeAll { if case .agentFinished(let f) = $0 { f.agent == agent } else { false } }
+        return .agentFinished(AgentFinish(agent: agent))
+    }
+
     private var atRest: Bool {
         switch state {
         case .idle, .building, .externalActivity, .meeting: true
@@ -463,7 +476,7 @@ final class NotchController {
     private func handle(_ command: ExternalCommand) {
         switch command {
         case .event(let event):
-            queue.append(xcodeVerdict(event) ?? .externalEvent(event))
+            queue.append(agentFinish(event) ?? xcodeVerdict(event) ?? .externalEvent(event))
             presentNext()
 
         case .activityStart(let activity):
@@ -647,6 +660,10 @@ final class NotchController {
         ("VPN", [
             ("VPN connected", .vpn(VPNNotice(minutesOn: nil))),
             ("VPN on for an hour", .vpn(VPNNotice(minutesOn: 60))),
+        ]),
+        ("Agents", [
+            ("Claude task finished", .agentFinished(AgentFinish(agent: .claude))),
+            ("Cursor task finished", .agentFinished(AgentFinish(agent: .cursor))),
         ]),
         ("Commands", [
             ("Tests running", .externalActivity(ExternalActivity(

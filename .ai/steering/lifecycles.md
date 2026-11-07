@@ -157,6 +157,20 @@ The one permission this adds is Automation for each browser, asked the first
 time that browser is used to identify a meeting. The native apps need nothing beyond the existing Accessibility
 row, and without it the click only brings the app forward.
 
+## Agent turns
+
+Claude Code and Cursor know when a turn ends, so neither is inferred. Each
+hook posts one ordinary Command Event — `claude-finished`, `cursor-finished` —
+and the controller files exactly those two names as **Task Finished** (mark and
+check) instead of the generic "Claude · Finished" pill, the same way it files Xcode's Behavior
+events as a build verdict. No new protocol verb, so `vitals-notify` is unchanged.
+
+- Claude: the `Stop` hook, beside the one that ends the Extension. `StopFailure`
+  and `SessionEnd` do not post it.
+- Cursor: the `stop` hook, and only when its payload says `completed`.
+- It queues like any Event, so it waits out an open panel and lands when the
+  notch is back at rest. It is the one Event that holds six seconds.
+
 ## Extensions
 
 Extensions are concurrent conditions, not queued states. Each records its

@@ -112,6 +112,18 @@ which subsystem is talking before you read anything.
     word and a third glyph spent on news nobody was waiting for.
   - **Build Succeeded** — the run you walked away from is done; this is the pill
     that says the machine is yours again
+- **Agents**
+  - **Task Finished** — Claude Code or Cursor stopped working a turn and the
+    answer is waiting. A two-flank pill grown to twice the
+    housing's height: the agent's own mark, large, on the left and a check as
+    large on the right, each against the camera housing, and "Claude task
+    finished" in small type under the housing between them. Each glyph has one
+    margin of black on its three open sides — above, below and outboard — and the
+    caption's baseline sits that same margin off the bottom, with an outline glow in the agent's
+    colour (Claude orange, Cursor silver) running left to right around the edge.
+    It holds about six seconds. Only a turn that ended normally says it — Claude's `Stop`, Cursor's
+    `stop` with status `completed`; a failure, an abort or a closed session
+    stays silent. The Claude Extension icon goes out at the same moment.
 - **Commands**
   - **Reported Event** — a process says what happened in kebab-case, split over
     the two flanks as subject and outcome (`tests-passed` → `Tests · Passed`).
@@ -137,7 +149,8 @@ the notch falls to Idle if it finished meanwhile.
     replaces Idle as the resting state while it lasts. Left flank: the call app's
     own icon — a video glyph for Meet, which has none — with a green live dot,
     centred between the bezel and the housing. Right
-    flank: the time on the call, `m:ss`, then `h:mm:ss`. No mic status — these apps hold the microphone open while you are
+    flank: the time on the call, coarse — `42s`, `1m`, `15m`, then whole hours
+    `1h+`, `12h+` — so it only changes when that text does. No mic status — these apps hold the microphone open while you are
     muted, so mute cannot be read, and a "mic on" would be true for the whole
     call. It ends when the microphone closes; a call that proves otherwise is a
     bug here, not a reason to poll. The Meeting page behind it is where the room

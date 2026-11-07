@@ -48,6 +48,32 @@ struct AirDropMark: Shape {
     }
 }
 
+// MARK: Cursor
+
+/// Cursor's cube as an outline: a hexagon with the three edges that meet at the
+/// near corner. Drawn rather than bundled — it is only ever one flat colour, and
+/// a stroke keeps it as light as the other glyphs beside it.
+struct CursorMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let x = { (t: CGFloat) in rect.minX + rect.width * t }
+        let y = { (t: CGFloat) in rect.minY + rect.height * t }
+        var path = Path()
+        path.move(to: CGPoint(x: x(0.5), y: y(0)))
+        path.addLine(to: CGPoint(x: x(0.92), y: y(0.25)))
+        path.addLine(to: CGPoint(x: x(0.92), y: y(0.75)))
+        path.addLine(to: CGPoint(x: x(0.5), y: y(1)))
+        path.addLine(to: CGPoint(x: x(0.08), y: y(0.75)))
+        path.addLine(to: CGPoint(x: x(0.08), y: y(0.25)))
+        path.closeSubpath()
+        path.move(to: CGPoint(x: x(0.08), y: y(0.25)))
+        path.addLine(to: CGPoint(x: x(0.5), y: y(0.5)))
+        path.addLine(to: CGPoint(x: x(0.92), y: y(0.25)))
+        path.move(to: CGPoint(x: x(0.5), y: y(0.5)))
+        path.addLine(to: CGPoint(x: x(0.5), y: y(1)))
+        return path
+    }
+}
+
 // MARK: Claude
 
 /// The burst while Claude is working: the real mark, turning slowly.

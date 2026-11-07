@@ -60,6 +60,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`NotchShape.swift`](../Vitals/Notch/NotchShape.swift) | The outward-flaring notch outline. Third-party, see its header. |
 | [`Marks.swift`](../Vitals/Notch/Marks.swift) | The Bluetooth, AirDrop and Claude glyphs, drawn by hand — SF Symbols ships none of them. Claude's is the exception: the real burst, bundled as the `ClaudeLogo` template asset and turned slowly. |
 | [`SpinLayers.swift`](../Vitals/Notch/SpinLayers.swift) | The marks that turn for minutes — the build ring and the Claude burst — as Core Animation layers. A SwiftUI `repeatForever` re-renders the whole notch every display frame; these cost the app nothing per frame. Anything that loops on the resting notch belongs here. |
+| [`OutlineGlow.swift`](../Vitals/Notch/OutlineGlow.swift) | Light travelling the notch's own edge — a faint tint along the whole outline with a swell running from the top of the left flare, round the bottom, to the top of the right one — as Core Animation layers behind the black shape. Also `NotchShape.outline`, the open outline (no closing run across the top) the dots are placed along. |
 | [`CGSSpace.swift`](../Vitals/Notch/CGSSpace.swift) | Private-API window space, so the panel survives a space swipe. |
 
 ### `Events/` — the machine talking
@@ -71,6 +72,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`Accessory.swift`](../Vitals/Events/Accessory.swift) | Bluetooth accessory connect detection and battery. |
 | [`EventPills.swift`](../Vitals/Events/EventPills.swift) | How an Event draws: compact (power), accessory, audio lost, command events, the track change (cover + equaliser) and the VPN pills — glyph-over-caption stacks. Heat has no pill; it glows. |
 | [`VerdictPill.swift`](../Vitals/Events/VerdictPill.swift) | How a finished build draws. An Event, not the tail of the Activity — the build has handed the notch back before this queues. The controller files Xcode's `xcode-build-succeeded/failed` Behavior events as this. |
+| [`AgentFinishedPill.swift`](../Vitals/Events/AgentFinishedPill.swift) | "Claude/Cursor task finished": the agent's mark and a check in the two flanks, with its outline glow. The controller files the Command Events `claude-finished` and `cursor-finished` as this. |
 | [`../Vitals/Commands/CommandReceiver.swift`](../Vitals/Commands/CommandReceiver.swift) | The local, versioned protocol behind `vitals-notify`, plus the explicit Event and Activity models it accepts. |
 
 ### `Activities/` — work you started

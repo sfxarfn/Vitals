@@ -35,8 +35,9 @@ through:
 **Events** are short pills for things that happen to the machine: battery
 charged or charging, thermal caution, throttling and cooling down, an accessory
 connecting (with its battery), audio falling off a headset onto the speakers,
-a VPN connecting, a new track, an Xcode build succeeding or failing, and
-anything you report yourself with `vitals-notify`. Heat also **glows** the
+a VPN connecting, a new track, an Xcode build succeeding or failing, Claude
+Code or Cursor finishing a task (the agent's mark and a check, with a glow
+running round the notch's edge), and anything you report yourself with `vitals-notify`. Heat also **glows** the
 notch's left edge until the machine is back to normal.
 
 **Activities** hold the notch for as long as the work runs: an Xcode build
@@ -104,8 +105,10 @@ The destination Mac needs neither the source code nor Xcode.
 5. If Xcode should report exact build lifecycles, transfer the three
    `installation-files/xcode-build-*.sh` scripts too. Keep their filenames
    unchanged so an update can replace them without reconfiguring Xcode.
-6. If Claude Code should show its in-progress Extension, transfer
-   `installation-files/claude-extension.sh` too.
+6. If Claude Code should show its in-progress Extension and its "task
+   finished" notice, transfer `installation-files/claude-extension.sh` too.
+7. If Cursor should show its "task finished" notice, transfer
+   `installation-files/cursor-finished.sh` too.
 
 ### Install on the new Mac
 
@@ -285,6 +288,11 @@ Add these hooks to `~/.claude/settings.json`, merging them with any existing
             "type": "command",
             "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
             "args": ["stop"]
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.local/libexec/vitals/claude-extension.sh",
+            "args": ["finished"]
           }
         ]
       }
@@ -318,6 +326,45 @@ Add these hooks to `~/.claude/settings.json`, merging them with any existing
 Claude Code passes its session ID to the hook. Overlapping sessions therefore
 share one icon without one session clearing another. The hook intentionally
 does nothing when Vitals is not running.
+
+The second `Stop` entry (`finished`) is what makes the notch show the Claude
+mark and a check, with an orange glow round its edge, each time a turn ends
+normally. It is optional: leave it out and the icon still comes and goes.
+`StopFailure` and `SessionEnd` do not announce anything. Because `Stop` fires
+after every turn, a one-line answer announces too.
+
+</details>
+
+<details>
+<summary><strong>How to Install the Cursor hook</strong></summary>
+
+This is optional. It makes the notch show the Cursor mark and a check, with a
+silver glow, when Cursor's agent completes a turn. Install the hook beside the others:
+
+```sh
+mkdir -p "$HOME/.local/libexec/vitals"
+/usr/bin/install -m 755 ./installation-files/cursor-finished.sh \
+  "$HOME/.local/libexec/vitals/cursor-finished.sh"
+```
+
+Add it to `~/.cursor/hooks.json`, merging with any existing `hooks` object:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      { "command": "$HOME/.local/libexec/vitals/cursor-finished.sh" }
+    ]
+  }
+}
+```
+
+Write the path out in full (`/Users/<you>/.local/...`) if Cursor does not
+expand `$HOME` in hook commands. The hook stays silent when Cursor reports the
+turn as `aborted` or `error`.
+Hooks need a Cursor version that supports them (1.7 or later); if the notice
+never appears, check the path in `hooks.json` and that the script is executable.
 
 </details>
 
@@ -366,7 +413,8 @@ single icon.
    dead script hooks.
 2. If the Claude Code hook was configured, remove the Vitals entries from
    `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` in
-   `~/.claude/settings.json`.
+   `~/.claude/settings.json`. If the Cursor hook was configured, remove its
+   `stop` entry from `~/.cursor/hooks.json`.
 3. Right-click the notch, open **Settings**, and disable **Launch at login**.
 4. Right-click the notch again and choose **Quit Vitals**.
 5. Move `/Applications/Vitals.app` to the Trash.
@@ -377,7 +425,8 @@ single icon.
    rm "$HOME/.local/libexec/vitals/xcode-build-started.sh" \
       "$HOME/.local/libexec/vitals/xcode-build-succeeded.sh" \
       "$HOME/.local/libexec/vitals/xcode-build-failed.sh" \
-      "$HOME/.local/libexec/vitals/claude-extension.sh"
+      "$HOME/.local/libexec/vitals/claude-extension.sh" \
+      "$HOME/.local/libexec/vitals/cursor-finished.sh"
    rmdir "$HOME/.local/libexec/vitals"
    ```
 

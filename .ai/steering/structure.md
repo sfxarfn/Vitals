@@ -75,6 +75,7 @@ category directory. State needed by those category views is declared on
 | `NotchShape.swift` | Defines the outward-flaring notch outline. |
 | `Marks.swift` | Contains custom Bluetooth and AirDrop marks unavailable as SF Symbols. |
 | `SpinLayers.swift` | Core Animation layers for marks that turn for minutes (build ring, Claude burst); never a SwiftUI `repeatForever` on the resting notch. |
+| `OutlineGlow.swift` | A swell of light travelling the notch outline, as Core Animation layers. |
 | `CGSSpace.swift` | Keeps the panel attached across macOS space changes using private window-space APIs. |
 
 ### `Vitals/Events/` — the machine acted
@@ -88,6 +89,7 @@ Events are temporary facts presented on their own clock.
 | `Accessory.swift` | Detects accessory connections, battery levels, and lost headset audio. |
 | `EventPills.swift` | Renders compact, sided, accessory, and audio Events. |
 | `VerdictPill.swift` | Renders completed Xcode build verdicts. |
+| `AgentFinishedPill.swift` | Renders "Claude/Cursor task finished": the agent's mark and a check in the two flanks, with an outline glow. |
 
 The shell-reported Event model lives in `Commands/CommandReceiver.swift`
 because its source and validation belong to the command protocol.

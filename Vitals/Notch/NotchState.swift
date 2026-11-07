@@ -37,6 +37,10 @@ enum NotchState: Equatable {
     /// reminder marks. Said so a tunnel you forgot about does not route the
     /// rest of your day; nothing is said when it goes off.
     case vpn(VPNNotice)
+    /// Claude Code or Cursor finished a turn: the agent's mark in one flank, a
+    /// check in the other. `AgentFinishedPill` draws it, `OutlineGlow` lights
+    /// its edge.
+    case agentFinished(AgentFinish)
 
     // MARK: Activity
 
@@ -129,13 +133,28 @@ struct NotchMetrics {
     /// the letters. Sized to the word alone, the last one gets shaved off.
     var verdictFlanks: Flanks = (56, 56)
     /// A live meeting: a 20pt glyph (its live dot hangs 2pt off the corner)
-    /// opposite the clock. The clock at 12pt is ~34pt for "24:31", plus
-    /// `notchPad`. Narrower than `verdictFlanks` because no word sits here, and
-    /// the two sides are rounded to one number — a lean of a few points would
-    /// read as a shape that failed to line up. Past an hour "1:02:33" is wider;
-    /// its `minimumScaleFactor` takes up the difference rather than the shape
-    /// growing under a call already in progress.
-    var meetingFlanks: Flanks = (42, 42)
+    /// opposite the clock. The widest the clock reads is "12h+" at 12pt, ~28pt,
+    /// plus `notchPad` and the corner's bite. Narrower than `verdictFlanks`
+    /// because no word sits here, and the two sides are rounded to one number —
+    /// a lean of a few points would read as a shape that failed to line up.
+    var meetingFlanks: Flanks = (38, 38)
+    /// A finished agent turn: the agent's mark and a check, each in a square
+    /// slot this size — well past the usual 20pt glyph.
+    var agentGlyph: CGFloat = 34
+    /// Twice the housing — Peek's height — so the large glyphs have room.
+    var agentHeight: CGFloat { notch.height * 2 }
+    /// The one margin around each glyph: above it (to the screen edge), below
+    /// it (to the bottom of the shape) and outboard of it (to the flank's outer
+    /// edge) are all this, so the glyph sits in an even frame of black. Derived,
+    /// not tuned: it is whatever centring the glyph in the height leaves.
+    var agentAir: CGFloat { (agentHeight - agentGlyph) / 2 }
+    /// Each glyph hugs the housing, `notchPad` off it, and `agentAir` is what
+    /// is left outboard. A matched pair: both glyphs share the slot size, so
+    /// nothing leans.
+    var agentFlanks: Flanks {
+        let flank = notchPad + agentGlyph + agentAir
+        return (flank, flank)
+    }
     /// The panel. Wider than `statFlanks` because the paged slot below the
     /// housing has to hold a readout's hero tile and its four rows beside the
     /// summary column and both arrows; the flanks above simply hug inward.
@@ -226,6 +245,7 @@ struct NotchMetrics {
         // pill is a cover against bars, a glyph against a glyph.
         case .event, .accessory, .audioLost, .trackChange: (glyphFlank, glyphFlank)
         case .verdict, .externalEvent, .vpn: verdictFlanks
+        case .agentFinished: agentFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
         case .building(let build):
@@ -258,9 +278,12 @@ struct NotchMetrics {
     }
 
     /// Height is what separates the categories on sight, so only the
-    /// Interaction is allowed to use it.
+    /// Interaction is allowed to use it — and one Event, whose two glyphs are
+    /// drawn large (`design.md`, Growth). Twice the housing, the same
+    /// as Peek.
     private func height(for state: NotchState) -> CGFloat {
         switch state {
+        case .agentFinished: agentHeight
         // The only state that grows past one row: the housing row plus the
         // body — summary column, paged slot and its dots.
         case .panel: notch.height + panelBodyHeight

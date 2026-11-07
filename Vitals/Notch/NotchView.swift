@@ -207,6 +207,7 @@ struct NotchView: View {
         case .building:             5
         case .externalActivity:     13
         case .meeting:              16
+        case .agentFinished:        17
         case .panel:                7
         }
     }
@@ -306,6 +307,7 @@ struct NotchView: View {
                         glowBar(thermalGlow).offset(x: -glowInset).transition(.opacity)
                         glowBar(thermalGlow).offset(x: glowInset).transition(.opacity)
                     }
+                    agentGlow
                 }
             }
             // States that last twenty minutes must not announce themselves;
@@ -518,6 +520,8 @@ struct NotchView: View {
             trackChangePill(change).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .vpn(let notice):
             vpnPill(notice).transition(.opacity.animation(.easeOut(duration: 0.2)))
+        case .agentFinished(let finish):
+            agentFinishedPill(finish).transition(.opacity.animation(.easeOut(duration: 0.2)))
 
         // Activity.
         case .building(let build):
@@ -572,6 +576,18 @@ struct NotchView: View {
             // its unmasked core down there and the blob comes back.
             .frame(width: 26, height: size.height)
             .blur(radius: glowBlur)
+    }
+
+    // MARK: Agent finished
+
+    /// Light running the whole edge, in the agent's colour. Behind the black
+    /// shape like the thermal bars: only what escapes the edge shows.
+    @ViewBuilder private var agentGlow: some View {
+        if case .agentFinished(let finish) = state {
+            OutlineGlow(top: topRadius, bottom: bottomRadius,
+                        tint: finish.nsTint, animated: !reduceMotion)
+                .transition(.opacity)
+        }
     }
 
     // MARK: Extensions

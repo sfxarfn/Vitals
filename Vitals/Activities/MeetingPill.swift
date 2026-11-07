@@ -24,10 +24,13 @@ extension NotchView {
     }
 
     /// A live call. The glyph says what, the green dot on its corner says it is
-    /// live, and the clock says how long — all a glance needs, and nothing that could be
-    /// wrong: the microphone's mute state cannot be read, so none is drawn.
+    /// live, and the clock says how long — all a glance needs, and nothing that
+    /// could be wrong: the microphone's mute state cannot be read, so none is
+    /// drawn.
     ///
-    /// One clock, once a second, only while this state is the resting notch.
+    /// The time is coarse on purpose: seconds for the first minute, minutes to
+    /// the hour, then whole hours — and it only redraws when that text changes,
+    /// so a long call ticks once an hour, not once a second.
     func meetingPill(_ meeting: Meeting) -> some View {
         HStack(spacing: 0) {
             callMark(meeting)
@@ -42,8 +45,8 @@ extension NotchView {
                 .flankSlot(metrics.meetingFlanks.left, .leading,
                            pad: metrics.notchPad, centered: true)
             Spacer(minLength: 0).frame(width: metrics.notch.width)
-            TimelineView(.periodic(from: meeting.startedAt, by: 1)) { context in
-                Text(Self.clock(context.date.timeIntervalSince(meeting.startedAt)))
+            TimelineView(MeetingClockSchedule(start: meeting.startedAt)) { context in
+                Text(Self.compactDuration(context.date.timeIntervalSince(meeting.startedAt)))
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.7)
@@ -53,5 +56,33 @@ extension NotchView {
         }
         .frame(height: metrics.notch.height)
         .accessibilityLabel("\(meeting.app) in progress")
+    }
+}
+
+extension NotchView {
+    /// "42s", "1m", "15m", "1h+", "12h+": seconds under a minute, whole minutes
+    /// under an hour, then whole hours with a "+" — past that it is "a long
+    /// call", and the minute it is on is not what the notch is for.
+    static func compactDuration(_ seconds: TimeInterval) -> String {
+        let t = max(Int(seconds), 0)
+        if t < 60 { return "\(t)s" }
+        if t < 3600 { return "\(t / 60)m" }
+        return "\(t / 3600)h+"
+    }
+}
+
+/// Fires only when `compactDuration` would read differently: every second for
+/// the first minute, every minute to the hour, every hour after. The small
+/// offset keeps a tick from landing a hair before its boundary and reading the
+/// old value for another interval.
+private struct MeetingClockSchedule: TimelineSchedule {
+    let start: Date
+
+    func entries(from startDate: Date, mode: Mode) -> some Sequence<Date> {
+        sequence(first: startDate) { date in
+            let elapsed = max(date.timeIntervalSince(start), 0)
+            let step: Double = elapsed < 60 ? 1 : (elapsed < 3600 ? 60 : 3600)
+            return start.addingTimeInterval((elapsed / step).rounded(.down) * step + step + 0.05)
+        }
     }
 }
