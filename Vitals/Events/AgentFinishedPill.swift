@@ -27,7 +27,8 @@ struct AgentFinish: Equatable {
 /// How "Claude task finished" draws: the agent's mark on the left, a check on
 /// the right, and the words in small type in the middle under the housing, their
 /// baseline level with the bottom of the mark. The mark and the glow's colour say
-/// who finished and the check says that it did; the caption says both in words
+/// who finished and the green check says that it did — the same green for both
+/// agents, so the tick is the outcome and the mark is who; the caption says both in words
 /// for a glance that did not catch either. The mark and check are drawn large,
 /// so the shape grows to twice its height to hold them. Each sits against the
 /// camera housing — the middle is dead space anyway, so hugging it costs nothing
@@ -50,7 +51,9 @@ extension NotchView {
                 // rather than whatever a point size happens to draw at.
                 Image(systemName: "checkmark.circle.fill")
                     .resizable().scaledToFit()
-                    .foregroundStyle(finish.tint)
+                    // Green for both agents. The mark and the glow already say
+                    // who finished; the tick only says that the turn ended.
+                    .foregroundStyle(.green)
                     .frame(width: glyph, height: glyph)
                     .flankSlot(metrics.agentFlanks.right, .trailing, pad: metrics.notchPad)
             }

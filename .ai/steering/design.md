@@ -92,10 +92,12 @@ Height is what separates the categories on sight, so only one of them is allowed
 to use it.
 
 - **Events, Activities and Extensions** — horizontal only. The notch stays one
-  row tall. One Event is the exception: **Agent Task Finished** is two glyphs
-  drawn large, with a caption between them, — about 34pt against the usual 20 — so the shape grows to twice
-  the housing's height — Peek's — for as long as it shows, then shrinks back. No
-  other Event may do this; a pill that reads at normal glyph size stays one row.
+  row tall. Two Events are the exception, and they share one shape: **Agent
+  Task Finished** and a finished Xcode run. Both are two glyphs drawn large,
+  with a caption between them — about 34pt against the usual 20 — so the shape
+  grows to twice the housing's height — Peek's — for as long as it shows, then
+  shrinks back. No other Event may do this; a pill that reads at normal glyph
+  size stays one row.
 - **Peek** — horizontal, and twice the notch's height. Exact.
 - **Panel** — horizontal, and as tall as its body needs: about three notch
   heights. A silhouette, not a measurement. Height is bought the same way width
@@ -112,4 +114,4 @@ to use it.
   wider, runs along it and repeats. Behind the black shape, so only what
   escapes the edge is seen; short-lived (the state that owns it), and drawn as
   Core Animation layers, never a SwiftUI `repeatForever`. The tint says who
-  finished: Claude's orange, Cursor's silver.
+  finished: Claude's orange, Cursor's silver, Xcode's blue.

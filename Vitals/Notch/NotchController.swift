@@ -59,7 +59,7 @@ final class NotchController {
     private var eventDismiss: Timer?
     /// The last Xcode Behavior lifecycle to end — what the verdict that follows
     /// it is about.
-    private var lastXcodeRun: (job: String?, endedAt: Date)?
+    private var lastXcodeRun: (job: String?, startedAt: Date?, endedAt: Date)?
     private let accessories = AccessoryWatcher()
     private let builds = BuildWatcher()
     private let commands = CommandReceiver()
@@ -123,8 +123,10 @@ final class NotchController {
     private static func duration(of state: NotchState) -> TimeInterval {
         switch state {
         case .trackChange, .vpn: return 2
-        // Long enough to read a sentence and watch the glow cross the edge.
-        case .agentFinished: return 6
+        // Long enough to read the sentence and watch the glow cross the edge.
+        // The Xcode verdict is the same kind of pill now — a grown shape, a
+        // line of type, a glow — so it holds as long as an agent turn does.
+        case .agentFinished, .verdict: return 6
         default: break
         }
         return eventDuration
@@ -445,12 +447,14 @@ final class NotchController {
         // minute is a different run.
         let run = lastXcodeRun.flatMap { Date().timeIntervalSince($0.endedAt) < 30 ? $0 : nil }
         lastXcodeRun = nil
+        let started = run?.startedAt ?? builds.runStartedAt
         return .verdict(BuildProgress(
-            label: ending == .succeeded ? "Success" : "Failed",
+            label: ending == .succeeded ? "Succeeded" : "Failed",
             job: run?.job ?? builds.progress?.job ?? "Build",
             done: 0, total: 0,
             icon: xcodeIcon,
-            ending: ending))
+            ending: ending,
+            elapsed: started.map { max(0, Date().timeIntervalSince($0)) }))
     }
 
     /// The agents' hooks report `claude-finished` and `cursor-finished` as plain
@@ -489,7 +493,7 @@ final class NotchController {
             // Noted here: the verdict event follows this stop, and by then the
             // lifecycle — and Xcode's job word — may be gone.
             if let stopped, isXcodeBuildActivity(stopped.name) {
-                lastXcodeRun = (builds.progress?.job, Date())
+                lastXcodeRun = (builds.progress?.job, builds.runStartedAt, Date())
             }
             if let stopped, isXcodeBuildActivity(stopped.name),
                !externalActivities.values.contains(where: { isXcodeBuildActivity($0.name) }) {
@@ -680,7 +684,8 @@ final class NotchController {
     private static func buildPreview(_ label: String, _ ending: BuildProgress.Ending?) -> BuildProgress {
         BuildProgress(label: label, done: 3019, total: 6766,
                       icon: xcodePreviewIcon(),
-                      ending: ending)
+                      ending: ending,
+                      elapsed: ending == .succeeded ? 12 * 60 + 23 : 3 * 60 + 5)
     }
 
     private static func xcodePreviewIcon() -> NSImage? {

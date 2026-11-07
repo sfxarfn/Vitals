@@ -27,6 +27,8 @@ struct BuildProgress: Equatable {
     /// is Equatable and a fresh NSImage every tick would redraw forever.
     var icon: NSImage?
     var ending: Ending?
+    /// How long the run took. Nil when the notch never saw it start.
+    var elapsed: TimeInterval? = nil
 
     var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
 }
@@ -89,6 +91,10 @@ final class BuildWatcher {
     /// after it re-reads one small subtree.
     private var status: AXUIElement?
     private var icon: NSImage?
+    /// When this run was first seen. Left in place when the poll stops: the
+    /// verdict event arrives after the lifecycle has already ended, and the
+    /// next run overwrites it.
+    private(set) var runStartedAt: Date?
     /// Text from the most recent scan, retained for the DEBUG miss report.
     private var lastText = ""
     /// When the counter stopped answering. Nil while it is still being read.
@@ -100,9 +106,9 @@ final class BuildWatcher {
     ///
     /// Indexing is deliberately absent — it runs after nearly every edit, and a
     /// notch lit all day is one nobody reads. Add its stem here if you want it.
-    /// `noun` is what the verdict puts under the icon: the pill's other flank
-    /// says only how the run ended, so this is the only thing left naming the
-    /// work — "Archive · Success".
+    /// `noun` names the run for anything that still asks — the verdict itself
+    /// no longer prints it. The finished pill says how it ended and how long
+    /// it took; Xcode's icon is already which app.
     private static let jobs: [(stem: String, label: String, noun: String)] = [
         ("archiv", "Archiving", "Archive"), ("build", "Building", "Build"),
         ("test", "Testing", "Test"), ("clean", "Cleaning", "Clean"),
@@ -192,6 +198,10 @@ final class BuildWatcher {
     func explicitLifecycleStarted() {
         ignoreDiskUntil = .distantPast
         explicit = true
+        // A disk write may already be polling this same run. Keep that earlier
+        // instant — the Behavior is Xcode confirming it, not a second start.
+        // A quiet watcher means the previous run is over, so this is a new one.
+        if timer == nil { runStartedAt = .now }
         // Start the blind cancel clock from the Behavior itself. `lastWrite` is
         // "when the build was last known alive", and Xcode saying it started is
         // exactly that. Without the seed it is still `.distantPast` here, and a
@@ -220,6 +230,9 @@ final class BuildWatcher {
     /// a disk write and an explicit Behavior — and neither restarts a live timer.
     private func poll() {
         guard timer == nil else { return }
+        // A Behavior that just opened this run already stamped it, then called
+        // here. A disk write with no Behavior open is the start itself.
+        if !explicit { runStartedAt = .now }
         timer = Timer.scheduledTimer(withTimeInterval: Self.live, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }

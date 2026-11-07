@@ -307,7 +307,7 @@ struct NotchView: View {
                         glowBar(thermalGlow).offset(x: -glowInset).transition(.opacity)
                         glowBar(thermalGlow).offset(x: glowInset).transition(.opacity)
                     }
-                    agentGlow
+                    edgeGlow
                 }
             }
             // States that last twenty minutes must not announce themselves;
@@ -580,13 +580,22 @@ struct NotchView: View {
 
     // MARK: Agent finished
 
-    /// Light running the whole edge, in the agent's colour. Behind the black
-    /// shape like the thermal bars: only what escapes the edge shows.
-    @ViewBuilder private var agentGlow: some View {
-        if case .agentFinished(let finish) = state {
+    /// Light running the whole edge. Behind the black shape like the thermal
+    /// bars: only what escapes the edge shows. The tint says who finished —
+    /// the agent's own colour, or Xcode's blue.
+    @ViewBuilder private var edgeGlow: some View {
+        if let tint = edgeGlowTint {
             OutlineGlow(top: topRadius, bottom: bottomRadius,
-                        tint: finish.nsTint, animated: !reduceMotion)
+                        tint: tint, animated: !reduceMotion)
                 .transition(.opacity)
+        }
+    }
+
+    private var edgeGlowTint: NSColor? {
+        switch state {
+        case .agentFinished(let finish): finish.nsTint
+        case .verdict: .systemBlue
+        default: nil
         }
     }
 

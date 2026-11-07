@@ -106,17 +106,19 @@ which subsystem is talking before you read anything.
     half the news. An output you switched to yourself is not filed here — you
     already know, and a pill for it would be noise.
 - **Xcode**
-  - **Build Failed** — the run ended without producing anything, so there is
-    nothing to come back to. A run you cancelled yourself is filed here too:
-    you already know you stopped it, and a verdict of its own would be a third
-    word and a third glyph spent on news nobody was waiting for.
-  - **Build Succeeded** — the run you walked away from is done; this is the pill
-    that says the machine is yours again
+  - **Build Failed** and **Build Succeeded** — the run you walked away from is
+    done. The same grown pill as an agent turn: Xcode's icon large on the left,
+    a tick as large on the right (green for succeeded, red for failed), and one
+    line under the housing — "Succeeded - 12m 23s", or Failed, with the time the
+    notch actually saw the run take. The outline glows Xcode blue either way;
+    the tick is what says how it ended. It holds about six seconds. A run you
+    cancelled yourself is not this: you already know you stopped it, and a
+    verdict of its own would be a third word spent on news nobody was waiting for.
 - **Agents**
   - **Task Finished** — Claude Code or Cursor stopped working a turn and the
     answer is waiting. A two-flank pill grown to twice the
-    housing's height: the agent's own mark, large, on the left and a check as
-    large on the right, each against the camera housing, and "Claude task
+    housing's height: the agent's own mark, large, on the left and a green check
+    as large on the right, each against the camera housing, and "Claude task
     finished" in small type under the housing between them. Each glyph has one
     margin of black on its three open sides — above, below and outboard — and the
     caption's baseline sits that same margin off the bottom, with an outline glow in the agent's

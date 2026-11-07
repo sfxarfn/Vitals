@@ -123,8 +123,9 @@ struct NotchMetrics {
     /// Both readings really do reach three digits — a pegged CPU and a hot die —
     /// so the pad is on top of that, not inside it.
     var statFlanks: Flanks = (64, 64)
-    /// Untracked Xcode builds, finished Xcode builds and explicit command
-    /// verdicts, and the VPN pills. Tracked builds use `statFlanks` for their live counter.
+    /// Untracked Xcode builds, explicit command events, and the VPN pills.
+    /// Tracked builds use `statFlanks` for their live counter. A finished
+    /// Xcode run grows like an agent turn and uses `agentFlanks`.
     ///
     /// Ceiling is "Success" at 8pt, level with "Archive" and "Analyze" on the
     /// left and wider than either glyph. The other 18 is clearance, not padding:
@@ -138,8 +139,8 @@ struct NotchMetrics {
     /// because no word sits here, and the two sides are rounded to one number —
     /// a lean of a few points would read as a shape that failed to line up.
     var meetingFlanks: Flanks = (38, 38)
-    /// A finished agent turn: the agent's mark and a check, each in a square
-    /// slot this size — well past the usual 20pt glyph.
+    /// A grown finish — an agent turn, or a finished Xcode run. The mark and
+    /// the tick each fill a square slot this size, well past the usual 20pt glyph.
     var agentGlyph: CGFloat = 34
     /// Twice the housing — Peek's height — so the large glyphs have room.
     var agentHeight: CGFloat { notch.height * 2 }
@@ -244,8 +245,8 @@ struct NotchMetrics {
         // so it buys the same flanks the accessory pill does. The track-change
         // pill is a cover against bars, a glyph against a glyph.
         case .event, .accessory, .audioLost, .trackChange: (glyphFlank, glyphFlank)
-        case .verdict, .externalEvent, .vpn: verdictFlanks
-        case .agentFinished: agentFlanks
+        case .externalEvent, .vpn: verdictFlanks
+        case .agentFinished, .verdict: agentFlanks
         // An Activity holds for minutes, so it stays one row tall — the flanks
         // carry everything and the notch never grows while you work.
         case .building(let build):
@@ -278,12 +279,12 @@ struct NotchMetrics {
     }
 
     /// Height is what separates the categories on sight, so only the
-    /// Interaction is allowed to use it — and one Event, whose two glyphs are
+    /// Interaction is allowed to use it — and two Events, whose glyphs are
     /// drawn large (`design.md`, Growth). Twice the housing, the same
     /// as Peek.
     private func height(for state: NotchState) -> CGFloat {
         switch state {
-        case .agentFinished: agentHeight
+        case .agentFinished, .verdict: agentHeight
         // The only state that grows past one row: the housing row plus the
         // body — summary column, paged slot and its dots.
         case .panel: notch.height + panelBodyHeight

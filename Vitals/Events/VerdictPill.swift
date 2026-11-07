@@ -3,67 +3,72 @@ import SwiftUI
 /// How a finished run in Xcode draws. An Event, not the tail of the Activity:
 /// the build has already handed the notch back by the time this shows, so it
 /// queues behind whatever is up and leaves on the Event clock.
+///
+/// The same grown shape as an agent turn: Xcode's own icon large on the left,
+/// a tick as large on the right, and one line under the housing — "Succeeded -
+/// 12m 23s". The outline glow is Xcode's blue, in `NotchView`. A failure keeps
+/// the same shape and the same blue; the tick goes red and the line says Failed,
+/// because colour on the glow would make two apps look like two outcomes.
 extension NotchView {
 
-    /// How the run ended, and what ended. A finished counter is stale the moment
-    /// it stops moving, so the verdict takes the slot it leaves on the right and
-    /// the left goes on naming the work — two stacks of a glyph over a word,
-    /// reading across the housing as "Archive · Failed".
-    ///
     /// `ending` is non-nil in this state by construction; the `if let` is what
     /// says so without a second value on the case.
     @ViewBuilder func verdictPill(_ build: BuildProgress) -> some View {
         if let ending = build.ending {
-            HStack(spacing: 0) {
-                // The noun, not the label — the verdict opposite says only how
-                // the run ended, so this is the only thing naming the work.
-                VStack(spacing: 1) {
-                    buildIcon(build)
-                    Text(build.job)
-                        .font(.system(size: 8, weight: .semibold, design: .rounded))
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .foregroundStyle(.white)
+            let glyph = metrics.agentGlyph
+            let succeeded = ending == .succeeded
+            ZStack(alignment: .bottom) {
+                HStack(spacing: 0) {
+                    buildIcon(build, size: glyph)
+                        .frame(width: glyph, height: glyph)
+                        // Hugging, the default: on the housing's edge, with
+                        // `agentAir` left outboard. Same slot the agent mark uses.
+                        .flankSlot(metrics.agentFlanks.left, .leading, pad: metrics.notchPad)
+                    Spacer(minLength: 0).frame(width: metrics.notch.width)
+                    Image(systemName: succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .resizable().scaledToFit()
+                        .foregroundStyle(succeeded ? Color.green : .red)
+                        .frame(width: glyph, height: glyph)
+                        .flankSlot(metrics.agentFlanks.right, .trailing, pad: metrics.notchPad)
                 }
-                // Centred, not hugging — see the far flank for why both sides are.
-                .flankSlot(metrics.verdictFlanks.left, .leading, pad: metrics.notchPad, centered: true)
-                Spacer(minLength: 0).frame(width: metrics.notch.width)
-                // The same stack the running pill puts in its *left* flank,
-                // moved across: the counter's slot is free now, and the verdict
-                // reads as the thing that replaced it rather than a new
-                // arrangement. Colour is the glyph's job — the word stays white,
-                // so which kind of ending it was and what ended are two separate
-                // reads.
-                VStack(spacing: 1) {
-                    // Two circles, same size and same metrics `buildIcon` draws
-                    // Xcode's own icon at, so the flanks stay a matched pair —
-                    // but the mark inside them differs, because colour on its
-                    // own is the wrong channel for this. The pill lives 2.6s in
-                    // the corner of your eye, where shape resolves and hue does
-                    // not, and the word underneath scales to 5pt before it gives
-                    // up. A hammer for both would have left the two endings
-                    // separated by nothing you can see from there.
-                    Image(systemName: ending == .succeeded ? "checkmark.circle.fill"
-                                                           : "xmark.circle.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(ending == .succeeded ? Color.green : .red)
-                        .frame(height: 20)
-                    // One of two verdicts off the watcher — "Success" or
-                    // "Failed" — never the job, which the noun opposite is
-                    // already saying.
-                    Text(build.label)
-                        .font(.system(size: 8, weight: .semibold, design: .rounded))
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .foregroundStyle(.white)
-                }
-                // Centred like the left, then pulled two points back toward the
-                // housing. The two stacks measure the same but do not weigh the
-                // same: Xcode's icon is a filled colour square and this is a
-                // thin ring, so centring both leaves the lighter side reading as
-                // if it had drifted outward. Two points is what settles it.
-                .offset(x: -2)
-                .flankSlot(metrics.verdictFlanks.right, .trailing, pad: metrics.notchPad, centered: true)
+                .frame(height: metrics.agentHeight)
+                Text(verdictLine(ending, build.elapsed))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .foregroundStyle(.white.opacity(0.8))
+                    // Under the housing, not across the glyphs. A long time
+                    // shrinks to the dead space rather than running into the
+                    // icon or the tick.
+                    .frame(maxWidth: metrics.notch.width)
+                    // Baseline, not the line box — see the agent pill. The same
+                    // margin under the glyphs is the margin under this line.
+                    .alignmentGuide(.bottom) { $0[.lastTextBaseline] + metrics.agentAir }
             }
-            .frame(height: metrics.notch.height)
+            .frame(height: metrics.agentHeight)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(verdictLine(ending, build.elapsed))
         }
+    }
+
+    /// "Succeeded - 12m 23s". Seconds under a minute, minutes and seconds under
+    /// an hour, then hours and minutes — past that the seconds are not the news.
+    /// No elapsed time at all when the run's start was never seen, rather than
+    /// a zero that would say the build took nothing.
+    private func verdictLine(_ ending: BuildProgress.Ending, _ elapsed: TimeInterval?) -> String {
+        let word = ending == .succeeded ? "Succeeded" : "Failed"
+        guard let elapsed else { return word }
+        return "\(word) - \(Self.verdictDuration(elapsed))"
+    }
+
+    private static func verdictDuration(_ seconds: TimeInterval) -> String {
+        let t = max(Int(seconds.rounded()), 0)
+        if t < 60 { return "\(t)s" }
+        if t < 3600 {
+            let m = t / 60, s = t % 60
+            return s == 0 ? "\(m)m" : "\(m)m \(s)s"
+        }
+        let h = t / 3600, m = (t % 3600) / 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
     }
 }
