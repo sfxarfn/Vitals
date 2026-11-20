@@ -138,7 +138,9 @@ Open Vitals Settings by right-clicking the notch.
   but cannot read Xcode, remove it from the list and add the copy in
   `/Applications` again. Without the grant a build still appears, with Xcode's
   icon and an indeterminate ring instead of a counter. Vitals never asks for
-  this permission on its own — this row is the only place it is offered.
+  this permission on its own — this row is the only place it is offered. The
+  same grant lets a press on the panel's Clipboard page paste for you; without
+  it a press only copies the item back, and you paste with ⌘V yourself.
 - Allow Bluetooth access when macOS asks if you want accessory connection and
   battery Events.
 - Enable **Launch at login** under **General** if Vitals should start after each

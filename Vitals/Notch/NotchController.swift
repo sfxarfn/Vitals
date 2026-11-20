@@ -25,6 +25,7 @@ final class NotchController {
     let shelf = Shelf()
     let nowPlaying = NowPlaying()
     let meetings = MeetingWatcher()
+    let clipboard = ClipboardHistory()
     /// Where a file drag sits relative to the housing. Nil the moment the drag
     /// leaves or ends — a leftover value would keep the silhouette animating
     /// for the rest of the day.
@@ -169,6 +170,10 @@ final class NotchController {
             state = resting
         }
         meetings.start()
+
+        // Always on, like the shelf: a copy made while the notch is resting is
+        // the one the Clipboard page has to have.
+        clipboard.start()
 
         commands.start { [weak self] command in self?.handle(command) }
 
@@ -1057,6 +1062,7 @@ private struct NotchRoot: View {
                   shelf: controller.shelf,
                   nowPlaying: controller.nowPlaying,
                   meetings: controller.meetings,
+                  clipboard: controller.clipboard,
                   fileDrag: controller.fileDrag,
                   endFileDrag: controller.endFileDrag,
                   airDrop: controller.airDrop,

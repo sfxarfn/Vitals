@@ -106,6 +106,7 @@ struct NotchView: View {
     let shelf: Shelf
     let nowPlaying: NowPlaying
     let meetings: MeetingWatcher
+    let clipboard: ClipboardHistory
     /// Approach cue from the controller. Nil unless a file drag is near the
     /// housing and the panel has not taken the drop over yet.
     let fileDrag: FileDrag?

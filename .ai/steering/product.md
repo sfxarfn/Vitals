@@ -60,6 +60,14 @@ which subsystem is talking before you read anything.
     clicking the app tile or the room brings that exact window forward. No
     buttons, no source line: the tile and the name are the controls, and
     hovering them underlines the name and slides a return arrow in on its left.
+  - **Clipboard** — a feature page, always there, never the one the panel
+    opens on: a copy is not something happening. The latest copy in a card a
+    third of the slot wide, the three before it as rows in the rest, each with
+    its age; a check marks whichever one a paste would give you now. Pressing
+    one pastes it into the app you were typing in and closes the panel; ⌥
+    copies it back without pasting and leaves the panel open. Nothing reorders
+    on a press, so the row stays under the pointer. Kept in memory only, twenty
+    deep, and anything a password manager marks concealed is never kept.
   - **Battery Status** — the numbers behind peek's one-line summary
   - **Thermal Detail** — the die behind peek's one rounded degree: where the
     heat sits (P-cores, E-cores, GPU), how many degrees are left before the

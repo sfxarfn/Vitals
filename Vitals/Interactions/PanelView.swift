@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 /// numbers are not pages, they are `PanelDetail`s. The arrows only go live,
 /// and the dots only appear, while there is a second case. Meeting is always a
 /// page; with no call it says so, and a live one is what makes it the opener.
-enum PanelPage: CaseIterable { case nowPlaying, shelf, meeting }
+/// Clipboard is always a page too, and never the opener: a copy is not
+/// something happening.
+enum PanelPage: CaseIterable { case nowPlaying, shelf, meeting, clipboard }
 
 /// The numbers behind a stat, opened from the stat itself — the die's flank or
 /// a summary tile — over whatever feature page was up. Not in the page cycle.
@@ -98,6 +100,8 @@ extension NotchView {
                                     nowPlayingPage
                                 case .meeting:
                                     meetingPage
+                                case .clipboard:
+                                    clipboardPage
                                 }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)

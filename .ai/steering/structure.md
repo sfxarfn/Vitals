@@ -122,6 +122,8 @@ surface.
 | `PeekView.swift` | Shows the two summary flanks and control row on hover. |
 | `PanelView.swift` | Provides the expanded panel, navigation, shelf, and AirDrop tile. Decides the opening page: Shelf if it holds something or a file is in hand, else Meeting while a call is live, else Now Playing. |
 | `MeetingPage.swift` | The Meeting feature page: "No meeting", or the live call's app, room and clock, with the way back to its window. |
+| `ClipboardHistory.swift` | Watches the pasteboard's change count, keeps the last twenty copies in memory, writes one back and posts the ⌘V that pastes it. |
+| `ClipboardPage.swift` | The Clipboard feature page: the latest copy in a one-third card, three older ones as rows, press to paste. |
 | `BatteryReadout.swift` | Shares battery wording and values across Peek and Panel. |
 | `ThermalReadout.swift` | Shares die summaries and detailed thermal readings. |
 | `NetworkReadout.swift` | The panel behind peek's two rates: link rate, signal, band and VPN. |
