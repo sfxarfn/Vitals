@@ -346,7 +346,10 @@ extension NotchView {
                         .frame(height: 10)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                // Not `.plain`: that gave the dots no hand, the one clickable
+                // in the panel the pointer did not answer. No scale either — a
+                // 4pt mark growing reads as the dot changing state.
+                .buttonStyle(VitalsPressStyle(scales: false))
             }
         }
         .frame(height: 4)
