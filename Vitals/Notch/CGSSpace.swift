@@ -46,6 +46,22 @@ final class CGSSpace {
     }
 }
 
+// MARK: Cursor
+
+/// WindowServer applies cursor changes only from the active app. Vitals is an
+/// accessory that never activates — the panel is non-activating so typing
+/// stays where it was — so `NSCursor.set()` from its tracking areas was
+/// overridden by the frontmost app's own cursor on the next mouse move, and
+/// the pointing hand never showed. This connection property opts the app's
+/// connection into setting the cursor while in the background. Private, like
+/// the rest of this file; there is no public switch.
+enum CGSCursor {
+    static func setInBackground() {
+        let cid = _CGSDefaultConnection()
+        _ = CGSSetConnectionProperty(cid, cid, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+    }
+}
+
 private typealias CGSConnectionID = UInt
 private typealias CGSSpaceID = UInt64
 
@@ -65,3 +81,6 @@ private func CGSRemoveWindowsFromSpaces(_ cid: CGSConnectionID, _ windows: NSArr
 private func CGSHideSpaces(_ cid: CGSConnectionID, _ spaces: NSArray)
 @_silgen_name("CGSShowSpaces")
 private func CGSShowSpaces(_ cid: CGSConnectionID, _ spaces: NSArray)
+@_silgen_name("CGSSetConnectionProperty")
+private func CGSSetConnectionProperty(_ cid: CGSConnectionID, _ target: CGSConnectionID,
+                                      _ key: CFString, _ value: CFTypeRef) -> Int32

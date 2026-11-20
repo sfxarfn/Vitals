@@ -138,6 +138,9 @@ final class NotchController {
 
     func start() {
         Self.shared = self
+        // Vitals is never the active app, and without this every hand the
+        // panel sets is put straight back to the arrow by the app that is.
+        CGSCursor.setInBackground()
         rebuildWindow()
         telemetry.onUpdate = { [weak self] in self?.evaluate() }
         telemetry.start()

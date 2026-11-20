@@ -61,7 +61,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 | [`Marks.swift`](../Vitals/Notch/Marks.swift) | The Bluetooth, AirDrop and Claude glyphs, drawn by hand — SF Symbols ships none of them. Claude's is the exception: the real burst, bundled as the `ClaudeLogo` template asset and turned slowly. |
 | [`SpinLayers.swift`](../Vitals/Notch/SpinLayers.swift) | The marks that turn for minutes — the build ring and the Claude burst — as Core Animation layers. A SwiftUI `repeatForever` re-renders the whole notch every display frame; these cost the app nothing per frame. Anything that loops on the resting notch belongs here. |
 | [`OutlineGlow.swift`](../Vitals/Notch/OutlineGlow.swift) | Light travelling the notch's own edge — a faint tint along the whole outline with a swell running from the top of the left flare, round the bottom, to the top of the right one — as Core Animation layers behind the black shape. Also `NotchShape.outline`, the open outline (no closing run across the top) the dots are placed along. |
-| [`CGSSpace.swift`](../Vitals/Notch/CGSSpace.swift) | Private-API window space, so the panel survives a space swipe. |
+| [`CGSSpace.swift`](../Vitals/Notch/CGSSpace.swift) | Private-API window space, so the panel survives a space swipe, and the connection property that lets a never-active app set the cursor at all. |
 
 ### `Events/` — the machine talking
 
