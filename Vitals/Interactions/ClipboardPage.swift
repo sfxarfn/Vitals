@@ -70,12 +70,15 @@ extension NotchView {
     // MARK: Card and rows
 
     private func latestCard(_ clip: Clip, at now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // The header row is squeezed to 12pt and the gaps to 2 so the copy gets
+        // its third line; at the rows' 16pt header the card only fit two.
+        VStack(alignment: .leading, spacing: 2) {
             HStack {
                 clipGlyph(clip)
                 Spacer(minLength: 0)
                 clipAge(clip, at: now)
             }
+            .frame(height: 12)
             if let thumb = clip.thumbnail {
                 Image(nsImage: thumb)
                     .resizable()
@@ -92,7 +95,7 @@ extension NotchView {
             }
         }
         .padding(.horizontal, 7)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.08)))
     }
