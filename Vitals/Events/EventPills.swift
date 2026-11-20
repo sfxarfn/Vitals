@@ -76,6 +76,40 @@ extension NotchView {
         .frame(height: metrics.notch.height)
     }
 
+    /// Charging, after the charge has run the display edge and landed. Plug
+    /// on the left, bolt on the right, "Plugged In, Charging" under the
+    /// housing. The yellow pulse is the silhouette's, in `NotchView` — it
+    /// starts when this does, which is when the charge arrives.
+    @ViewBuilder func chargingPill(_ event: Event) -> some View {
+        let glyph = metrics.agentGlyph
+        ZStack(alignment: .bottom) {
+            HStack(spacing: 0) {
+                Image(systemName: "powerplug.fill")
+                    .resizable().scaledToFit()
+                    .foregroundStyle(.white)
+                    .frame(width: glyph, height: glyph)
+                    .flankSlot(metrics.agentFlanks.left, .leading, pad: metrics.notchPad)
+                Spacer(minLength: 0).frame(width: metrics.notch.width)
+                Image(systemName: "bolt.fill")
+                    .resizable().scaledToFit()
+                    .foregroundStyle(.yellow)
+                    .frame(width: glyph * 0.62, height: glyph)
+                    .frame(width: glyph, height: glyph)
+                    .flankSlot(metrics.agentFlanks.right, .trailing, pad: metrics.notchPad)
+            }
+            .frame(height: metrics.agentHeight)
+            Text("Plugged In, Charging")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(maxWidth: metrics.notch.width)
+                .alignmentGuide(.bottom) { $0[.lastTextBaseline] + metrics.agentAir }
+        }
+        .frame(height: metrics.agentHeight)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Plugged In, Charging")
+    }
+
     /// The pack's level — the only centre Events left are power ones; heat
     /// glows instead of presenting.
     private func compactValue(_ event: Event) -> String {

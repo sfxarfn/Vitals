@@ -92,12 +92,13 @@ Height is what separates the categories on sight, so only one of them is allowed
 to use it.
 
 - **Events, Activities and Extensions** — horizontal only. The notch stays one
-  row tall. Two Events are the exception, and they share one shape: **Agent
-  Task Finished** and a finished Xcode run. Both are two glyphs drawn large,
-  with a caption between them — about 34pt against the usual 20 — so the shape
-  grows to twice the housing's height — Peek's — for as long as it shows, then
-  shrinks back. No other Event may do this; a pill that reads at normal glyph
-  size stays one row.
+  row tall. Three Events grow, and they share the height: **Agent Task
+  Finished**, a finished Xcode run, and **Charging Started**. Glyphs drawn
+  large — about 34pt against the usual 20 — so the shape grows to twice the
+  housing's height — Peek's — for as long as it shows, then shrinks back. No
+  other Event may do this; a pill that reads at normal glyph size stays one
+  row. Charging is the one whose light is not the outline glow: a charge runs
+  the display edge into the notch, and that arrival is what grows it.
 - **Peek** — horizontal, and twice the notch's height. Exact.
 - **Panel** — horizontal, and as tall as its body needs: about three notch
   heights. A silhouette, not a measurement. Height is bought the same way width
@@ -115,3 +116,7 @@ to use it.
   escapes the edge is seen; short-lived (the state that owns it), and drawn as
   Core Animation layers, never a SwiftUI `repeatForever`. The tint says who
   finished: Claude's orange, Cursor's silver, Xcode's blue.
+- **Charging** does not use that glow. A charge runs once from the display's
+  bottom-left corner, up the left edge and across the top into the notch, and
+  ends there. On arrival the notch glows yellow and pulses — the whole edge
+  brightens and dims together — until the pill leaves. Nothing travels the outline.

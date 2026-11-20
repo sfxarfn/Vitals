@@ -197,7 +197,7 @@ struct NotchView: View {
     private var shapeKey: Int {
         switch state {
         case .idle:                 0
-        case .event:                1
+        case .event(let event):     event.signal == .chargingStarted ? 18 : 1
         case .accessory:            3
         case .audioLost:            4
         case .verdict:              11
@@ -308,6 +308,7 @@ struct NotchView: View {
                         glowBar(thermalGlow).offset(x: glowInset).transition(.opacity)
                     }
                     edgeGlow
+                    chargePulse
                 }
             }
             // States that last twenty minutes must not announce themselves;
@@ -507,7 +508,11 @@ struct NotchView: View {
 
         // Events.
         case .event(let event):
-            compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+            if event.signal == .chargingStarted {
+                chargingPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+            } else {
+                compactPill(event).transition(.opacity.animation(.easeOut(duration: 0.2)))
+            }
         case .accessory(let accessory):
             accessoryPill(accessory).transition(.opacity.animation(.easeOut(duration: 0.2)))
         case .audioLost(let loudness):
@@ -596,6 +601,16 @@ struct NotchView: View {
         case .agentFinished(let finish): finish.nsTint
         case .verdict: .systemBlue
         default: nil
+        }
+    }
+
+    /// Yellow light behind the whole shape, breathing. Only once the charge
+    /// has arrived — that is when this state comes up. A pulse, not a swell
+    /// running the outline: the light gets brighter and dimmer together.
+    @ViewBuilder private var chargePulse: some View {
+        if case .event(let event) = state, event.signal == .chargingStarted {
+            ChargePulse(top: topRadius, bottom: bottomRadius, animated: !reduceMotion)
+                .transition(.opacity)
         }
     }
 

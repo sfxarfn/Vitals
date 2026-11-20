@@ -82,7 +82,13 @@ which subsystem is talking before you read anything.
 
 - **Power**
   - **Battery Charged** — the pack reached full and the machine is running on the adapter
-  - **Charging Started** — current is going into the pack, not just into the machine
+  - **Charging Started** — the charger was just plugged in, whether or not the pack is taking current yet.
+    A charge runs once along the display, from the bottom-left corner up the left
+    edge and across the top into the notch. That arrival grows the notch to twice
+    the housing: a plug on the left, a bolt on the right, and "Plugged In, Charging"
+    under the housing. When the charge arrives the notch glows yellow and pulses
+    for as long as the pill holds — the whole edge together, not a swell running
+    around it. It holds about six seconds. Full stays the one-row pill.
 - **Thermal**
   - **Elevated** — macOS entered `.fair`; silently lights the left edge orange
   - **Thermal Caution** — macOS entered `.serious`; announces the transition and

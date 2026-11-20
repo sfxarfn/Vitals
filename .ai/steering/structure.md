@@ -87,7 +87,8 @@ Events are temporary facts presented on their own clock.
 | `Telemetry.swift` | Collects power, thermal, CPU, and network readings. |
 | `EventEngine.swift` | Turns readings into closed-set Signals using thresholds, hysteresis, and cooldowns. |
 | `Accessory.swift` | Detects accessory connections, battery levels, and lost headset audio. |
-| `EventPills.swift` | Renders compact, sided, accessory, and audio Events. |
+| `EventPills.swift` | Renders compact, sided, accessory, and audio Events, plus the grown charging pill. |
+| `ChargeArc.swift` | Runs the one-shot charge along the display edge into the notch before charging grows. |
 | `VerdictPill.swift` | Renders a finished Xcode run: Xcode's icon and a tick in the two flanks, how it ended and how long it took under the housing, with an Xcode-blue outline glow. |
 | `AgentFinishedPill.swift` | Renders "Claude/Cursor task finished": the agent's mark and a check in the two flanks, with an outline glow. |
 

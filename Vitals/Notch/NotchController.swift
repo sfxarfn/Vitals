@@ -126,7 +126,9 @@ final class NotchController {
         // Long enough to read the sentence and watch the glow cross the edge.
         // The Xcode verdict is the same kind of pill now — a grown shape, a
         // line of type, a glow — so it holds as long as an agent turn does.
+        // Charging is that shape too; its light already ran before it appeared.
         case .agentFinished, .verdict: return 6
+        case .event(let event) where event.signal == .chargingStarted: return 6
         default: break
         }
         return eventDuration
@@ -468,10 +470,17 @@ final class NotchController {
         return .agentFinished(AgentFinish(agent: agent))
     }
 
+    /// A charge is running the display edge and has not landed yet. The notch
+    /// stays where it was until the arrival grows it, and nothing else may
+    /// take it in that gap.
+    private var chargeIncoming = false
+    private let chargeArc = ChargeArc()
+
     private var atRest: Bool {
+        if chargeIncoming { return false }
         switch state {
-        case .idle, .building, .externalActivity, .meeting: true
-        default: false
+        case .idle, .building, .externalActivity, .meeting: return true
+        default: return false
         }
     }
 
@@ -597,6 +606,28 @@ final class NotchController {
     /// straight back — to the Activity it borrowed it from if that is still
     /// running, and to idle if the work finished meanwhile.
     private func presentAlone(_ next: NotchState) {
+        // Charging waits for the charge to run the display edge. The pill is
+        // what the arrival grows into, so the notch stays put until then.
+        // Reduce Motion skips the run and grows straight away.
+        if case .event(let event) = next, event.signal == .chargingStarted,
+           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+           let screen, let notch = notchRect {
+            chargeIncoming = true
+            chargeArc.play(on: screen, notchMinX: notch.minX) { [weak self] in
+                guard let self else { return }
+                self.chargeIncoming = false
+                guard self.atRest else {
+                    self.queue.insert(next, at: 0)
+                    return
+                }
+                self.commitPresented(next)
+            }
+            return
+        }
+        commitPresented(next)
+    }
+
+    private func commitPresented(_ next: NotchState) {
         state = next
         eventDismiss?.invalidate()
         eventDismiss = Timer.scheduledTimer(withTimeInterval: Self.duration(of: next), repeats: false) { [weak self] _ in
@@ -717,6 +748,12 @@ final class NotchController {
     }
 
     func preview(_ state: NotchState) {
+        // A charge still running the edge loses to the button, the same way a
+        // pill already up does. Cancelled, its completion does not also fire.
+        if chargeIncoming {
+            chargeArc.cancel()
+            chargeIncoming = false
+        }
         queue.append(state)
         // Whatever is up loses: pressing a second button is a request to see
         // that state now, not after the current one times out. A press that

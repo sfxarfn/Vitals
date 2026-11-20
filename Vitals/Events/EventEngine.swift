@@ -49,10 +49,10 @@ enum Signal: String, CaseIterable {
     /// hysteresis, which is fine for signals the OS already debounces.
     var thresholds: (assertAbove: Double, clearBelow: Double) {
         switch self {
-        // 3W, not a hair over zero: the reading wanders either side of idle by a
-        // watt or so, and the hysteresis is what makes unplugging the thing that
-        // clears this — so plugging back in is a fresh crossing and fires again.
-        case .chargingStarted:      (3, 1)
+        // On or off. Unplugging is the clear, so plugging back in is a new
+        // crossing. No watt band: a Mac can sit on the adapter with the pack
+        // taking nothing, and that plug is still the event.
+        case .chargingStarted:      (0.5, 0.5)
         case .charged:              (99.5, 98)
         // Thermal is updated by `updateThermal`, not this numeric path. These
         // levels let priming seed the right glow without inventing temperatures.
@@ -64,16 +64,15 @@ enum Signal: String, CaseIterable {
 
     func value(_ r: Reading) -> Double {
         switch self {
-        // Watts into the pack, which is the half `isCharging` cannot answer:
-        // that flag reads true for an adapter merely running the machine, and
-        // false right through the negotiation where current does start flowing.
+        // The plug, not the current. `isCharging` and the pack's watts both
+        // stay quiet while the adapter runs the machine and the pack takes
+        // nothing — which is a normal plugged-in state, not a missed reading.
         //
-        // Silent near full. A pack held at 100% is deliberately cycled off the
-        // adapter and topped back up every few minutes — `pmset -g log` shows AC
-        // and Batt alternating seconds apart with nothing else changing — and
-        // each of those pulses is real current going in that means nothing. 95 is
-        // where the rest of the app already stops calling a pack "charging".
-        case .chargingStarted:      r.onAC && r.percent < 95 ? r.batteryWatts : 0
+        // Silent near full. A pack held at 100% is cycled off the adapter and
+        // topped back up every few minutes, and each of those hops would
+        // otherwise be a plug. 95 is where the rest of the app already stops
+        // calling a pack "charging".
+        case .chargingStarted:      r.onAC && r.percent < 95 ? 1 : 0
         // The percentage alone: a pack only climbs to full on the adapter, so
         // the "running on the adapter" half of the Event comes free.
         case .charged:              Double(r.percent)
@@ -132,6 +131,13 @@ enum Signal: String, CaseIterable {
     /// state that is an emergency rather than a fact.
     var glowTint: Color { tint }
 
+    /// How soon the same crossing may announce again. Charging clears by
+    /// actually coming off the adapter, so a few seconds is enough to ignore a
+    /// connector that bounced. The long one is for a level that chatters.
+    var cooldown: TimeInterval {
+        self == .chargingStarted ? 4 : EventEngine.cooldown
+    }
+
 }
 
 /// One presentation of a Signal that earns a pill.
@@ -178,7 +184,7 @@ struct EventEngine {
             } else if v > on {
                 active.insert(s)
                 guard s.loudness == .pill else { continue }
-                if let last = lastFired[s], now.timeIntervalSince(last) < Self.cooldown { continue }
+                if let last = lastFired[s], now.timeIntervalSince(last) < s.cooldown { continue }
                 lastFired[s] = now
                 fired.append(Event(signal: s))
             }
@@ -273,11 +279,11 @@ enum EventEngineSelfCheck {
 
         // MARK: Charging
 
-        // Current into the pack only counts plugged in — off the adapter the
-        // same magnitude is the machine draining it.
+        // Plugging in is the crossing, even when the pack is taking no current.
+        // Off the adapter the same reading is just the machine running.
         var c = primed()
         assert(c.update(Reading(percent: 40, onAC: false, batteryWatts: 8), now: t0).isEmpty)
-        assert(c.update(Reading(percent: 40, onAC: true, batteryWatts: 8), now: t0)
+        assert(c.update(Reading(percent: 80, onAC: true, batteryWatts: 0), now: t0)
                == [Event(signal: .chargingStarted)])
 
         // Unplugging is what clears it, so plugging back in is news again.

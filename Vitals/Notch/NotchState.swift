@@ -11,9 +11,9 @@ enum NotchState: Equatable {
 
     // MARK: Events
 
-    /// A power Event owning the whole notch: glyph in one flank, its value in
-    /// the other — the only Signals that still present; heat glows instead.
-    /// `compactPill` draws it.
+    /// A power Event owning the whole notch. Charged is a glyph against its
+    /// value, one row tall. Charging starts as a charge running the display
+    /// edge, then the same grown height as a finished turn — `chargingPill`.
     case event(Event)
     /// A Bluetooth accessory just connected: what it is, and how full it is.
     case accessory(Accessory)
@@ -244,6 +244,9 @@ struct NotchMetrics {
         // A centre Event is always compact — a glyph against one short value —
         // so it buys the same flanks the accessory pill does. The track-change
         // pill is a cover against bars, a glyph against a glyph.
+        // Charging grows like a finished turn. The other centre Events stay a
+        // glyph against one short value, the same flanks the accessory pill uses.
+        case .event(let event) where event.signal == .chargingStarted: agentFlanks
         case .event, .accessory, .audioLost, .trackChange: (glyphFlank, glyphFlank)
         case .externalEvent, .vpn: verdictFlanks
         case .agentFinished, .verdict: agentFlanks
@@ -279,12 +282,12 @@ struct NotchMetrics {
     }
 
     /// Height is what separates the categories on sight, so only the
-    /// Interaction is allowed to use it — and two Events, whose glyphs are
-    /// drawn large (`design.md`, Growth). Twice the housing, the same
-    /// as Peek.
+    /// Interaction is allowed to use it — and the Events drawn large
+    /// (`design.md`, Growth). Twice the housing, the same as Peek.
     private func height(for state: NotchState) -> CGFloat {
         switch state {
         case .agentFinished, .verdict: agentHeight
+        case .event(let event) where event.signal == .chargingStarted: agentHeight
         // The only state that grows past one row: the housing row plus the
         // body — summary column, paged slot and its dots.
         case .panel: notch.height + panelBodyHeight
