@@ -17,8 +17,9 @@ struct Clip: Identifiable {
     let thumbnail: NSImage?
     let items: [[NSPasteboard.PasteboardType: Data]]
     let copiedAt: Date
-    /// Same content copied twice is one clip, moved up. Hashed off the bytes,
-    /// not the preview — two different images both preview as "Image".
+    /// Same content copied twice is one clip, moved up. Files and images hash
+    /// off the bytes, not the preview — two different images can preview the
+    /// same. Text hashes off its trimmed string alone.
     let signature: Int
 }
 
@@ -155,9 +156,14 @@ final class ClipboardHistory {
         let folded = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !folded.isEmpty else { return nil }
         let preview = String(folded.prefix(300))
-        let link = !raw.contains(where: \.isWhitespace) && Self.isLink(folded)
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let link = !trimmed.contains(where: \.isWhitespace) && Self.isLink(trimmed)
+        // Text is the same copy when its trimmed string is. Hashing every
+        // representation split it: apps write extras beside the string (a
+        // source URL, a timestamped RTF) that change between two copies of the
+        // same words, and the page showed the same row twice.
         return Clip(kind: link ? .link : .text, preview: preview, thumbnail: nil,
-                    items: items, copiedAt: now, signature: signature)
+                    items: items, copiedAt: now, signature: trimmed.hashValue)
     }
 
     private static func isLink(_ s: String) -> Bool {
