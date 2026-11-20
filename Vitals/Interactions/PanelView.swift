@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The panel's feature pages, in the order the arrows and the dots walk them.
+/// The panel's feature pages, in the order the arrows, the dots and a
+/// two-finger swipe walk them.
 /// Now Playing is the main page; which one the panel opens on is decided in
 /// one place, `openingPage`. Features sit side by side here; the stats'
 /// numbers are not pages, they are `PanelDetail`s. The arrows only go live,
@@ -135,6 +136,15 @@ extension NotchView {
             .padding(.horizontal, panelInset)
             .padding(.bottom, 8)
             .animation(.snappy(duration: 0.2), value: panelPage)
+        }
+        // Behind everything and never hit-tested, so drops, clicks and hover
+        // land where they did. Off with one page, under a detail (the arrows
+        // are gone then too), and over a shelf that has its own sideways
+        // scroll to give.
+        .background {
+            PageSwipe(enabled: canPage && panelDetail == nil
+                               && !(panelPage == .shelf && shelfHovered && shelfOverflows),
+                      turn: { turnPage(by: $0) })
         }
         // Aiming a file at an inset box is darts. The whole open panel takes a
         // drop — the housing row, the padding, and the readout pages the drag
@@ -306,13 +316,16 @@ extension NotchView {
 
     // MARK: Paging
 
-    /// Walks the feature pages in order and wraps, so either arrow reaches all.
     private func pageArrow(by step: Int) -> some View {
-        PageArrow(step: step, live: canPage, reduceMotion: reduceMotion) {
-            let walk = PanelPage.allCases
-            let here = walk.firstIndex(of: panelPage) ?? 0
-            panelPage = walk[(here + step + walk.count) % walk.count]
-        }
+        PageArrow(step: step, live: canPage, reduceMotion: reduceMotion) { turnPage(by: step) }
+    }
+
+    /// Walks the feature pages in order and wraps, so either arrow reaches all.
+    /// The swipe shares it, so the two can never disagree about the next page.
+    private func turnPage(by step: Int) {
+        let walk = PanelPage.allCases
+        let here = walk.firstIndex(of: panelPage) ?? 0
+        panelPage = walk[(here + step + walk.count) % walk.count]
     }
 
     /// Which feature page the slot is on. Under the slot only, so the dots centre
@@ -475,6 +488,9 @@ extension NotchView {
             .animation(shelfPop, value: liftingURL)
         }
         .scrollIndicators(.never)
+        .onScrollGeometryChange(for: Bool.self) { $0.contentSize.width > $0.containerSize.width } action: { _, overflows in
+            shelfOverflows = overflows
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RoundedRectangle(cornerRadius: 14)
@@ -505,6 +521,7 @@ extension NotchView {
         .contextMenu {
             Button("Clear shelf") { shelf.clear() }.disabled(shelf.urls.isEmpty)
         }
+        .onHover { shelfHovered = $0 }
     }
 
     private func shelfChip(_ url: URL, index: Int) -> some View {
@@ -656,5 +673,101 @@ private struct PageArrow: View {
         .disabled(!live)
         .onHover { hovered = $0 }
         .accessibilityLabel(step < 0 ? "Previous page" : "Next page")
+    }
+}
+
+/// Two fingers sideways across the panel turn the page, the same step as an
+/// arrow. A local monitor, not a gesture or a `scrollWheel` override: SwiftUI
+/// has no trackpad-scroll gesture on macOS, and a view that took scroll events
+/// itself would sit over the shelf and its drops. This view is never hit-tested;
+/// it only reads the scroll events headed for its own bounds and takes the ones
+/// that are a page swipe. Everything else passes through untouched.
+private struct PageSwipe: NSViewRepresentable {
+    let enabled: Bool
+    let turn: (Int) -> Void
+
+    func makeNSView(context: Context) -> SwipeView { SwipeView() }
+
+    func updateNSView(_ view: SwipeView, context: Context) {
+        view.enabled = enabled
+        view.turn = turn
+    }
+
+    final class SwipeView: NSView {
+        var enabled = false
+        var turn: (Int) -> Void = { _ in }
+
+        /// What the gesture under way has been read as. Kept past `.ended`, so
+        /// the momentum that follows goes where the gesture went.
+        private enum Claim { case ignored, undecided, page }
+        private var claim = Claim.ignored
+        private var travel = CGSize.zero
+        private var turned = false
+        private var monitor: Any?
+
+        /// Points of travel before the direction is read. Under it a resting
+        /// finger's drift would decide.
+        private let slop: CGFloat = 6
+        /// Points of sideways travel that turn the page. Far enough that a
+        /// sideways wobble in a vertical scroll never reaches it.
+        private let threshold: CGFloat = 40
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        // The monitor lives exactly as long as the panel is in a window, so it
+        // goes when the panel closes and no hidden page can be turned.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            claim = .ignored
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                let take = MainActor.assumeIsolated { self?.takes(event) ?? false }
+                return take ? nil : event
+            }
+        }
+
+        /// Whether the panel keeps this event. Swallowed once the gesture is a
+        /// page swipe, so nothing underneath also scrolls with it.
+        private func takes(_ event: NSEvent) -> Bool {
+            // A wheel notches in lines and has no phases: never a swipe.
+            guard event.window === window, event.hasPreciseScrollingDeltas else { return false }
+            // The coast after a flick. The flick already turned its page; the
+            // coast must not turn another, nor scroll what is under the panel.
+            if !event.momentumPhase.isEmpty { return claim == .page }
+
+            switch event.phase {
+            case .began:
+                let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+                claim = enabled && inside ? .undecided : .ignored
+                travel = .zero
+                turned = false
+                return false
+            case .changed:
+                guard claim != .ignored else { return false }
+                travel.width += event.scrollingDeltaX
+                travel.height += event.scrollingDeltaY
+                if claim == .undecided {
+                    guard hypot(travel.width, travel.height) >= slop else { return false }
+                    claim = abs(travel.width) > abs(travel.height) ? .page : .ignored
+                    if claim == .ignored { return false }
+                }
+                if !turned, abs(travel.width) >= threshold {
+                    turned = true
+                    // The delta already carries the natural-scrolling setting:
+                    // positive is content moving right, which brings in the
+                    // page before this one.
+                    turn(travel.width > 0 ? -1 : 1)
+                }
+                return true
+            case .ended, .cancelled:
+                return claim == .page
+            default:
+                // `.mayBegin` is a finger resting before the next gesture; the
+                // last gesture's claim must not swallow it.
+                return false
+            }
+        }
     }
 }

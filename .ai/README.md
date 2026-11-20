@@ -90,7 +90,7 @@ belongs to — if it fits none of them, it does not belong in the notch.
 
 | File | Role |
 |---|---|
-| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel — what hover opens: the two stat flanks, the summary column, `PanelPage`'s feature pages behind two arrows and the dots (hidden while Shelf is the only one; opens on Shelf if it holds something or a file is in hand, else Meeting while a call is live, else Now Playing), the `PanelDetail` readouts the stats open over them, the shelf and the AirDrop strip. |
+| [`PanelView.swift`](../Vitals/Interactions/PanelView.swift) | The panel — what hover opens: the two stat flanks, the summary column, `PanelPage`'s feature pages behind two arrows, the dots and a two-finger trackpad swipe (hidden while Shelf is the only one; opens on Shelf if it holds something or a file is in hand, else Meeting while a call is live, else Now Playing), the `PanelDetail` readouts the stats open over them, the shelf and the AirDrop strip. |
 | [`BatteryReadout.swift`](../Vitals/Interactions/BatteryReadout.swift) | The battery in words and numbers: the summary column's value ("AC" on wall power) and the battery page. |
 | [`ThermalReadout.swift`](../Vitals/Interactions/ThermalReadout.swift) | The die, same way: peek's degree and tint, and the panel behind them — throttle headroom, memory, and whichever temperatures the chip is willing to name (M1 splits its die three ways; M2/M3 do not). |
 | [`NetworkReadout.swift`](../Vitals/Interactions/NetworkReadout.swift) | The link, same way: peek's two rates opened into what carries them — link rate, signal, band and channel, and whether a VPN has it. Names the interface, never the network: the SSID costs a Location prompt. |

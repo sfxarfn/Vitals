@@ -156,6 +156,11 @@ struct NotchView: View {
     /// Which stat the open detail grew out of — thermal has two, the degree
     /// and the CPU — so it grows from, and shrinks back into, the one clicked.
     @State var detailOrigin: GrowOrigin?
+    /// The pointer is over the shelf box, and the box holds more chips than it
+    /// shows. Together they hand a sideways swipe to the box, which scrolls,
+    /// instead of the panel, which would turn the page.
+    @State var shelfHovered = false
+    @State var shelfOverflows = false
 
     var size: CGSize { metrics.size(for: state, extensions: extensions) }
     private var lifted: Bool {
@@ -395,6 +400,8 @@ struct NotchView: View {
             freshURLs = []
             ripplePoint = nil
             landFlash = false
+            // The box leaving the hierarchy does not always end its hover.
+            shelfHovered = false
         }
         if new != .panel { VitalsCursor.forceArrow() }
         guard !reduceMotion, old != new else { return }
