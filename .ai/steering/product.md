@@ -50,8 +50,8 @@ which subsystem is talking before you read anything.
 - **Panel** — peek opens downward into a surface you can actually work in. It
   opens on whichever page has something happening, in this order: **File Tray**
   when it holds a file or one is being dragged in, then **Meeting** while a call
-  is live, then Now Playing as the floor. Decided fresh on every open; the last
-  page is not remembered.
+  is live, then **Now Playing** while something is playing, then **Clipboard**
+  as the floor. Decided fresh on every open; the last page is not remembered.
   - **File Tray** — a drop box that holds files and hands them to AirDrop
   - **Meeting** — a feature page, always there. With no call it says "No
     meeting" and nothing else. It is the way back: after sharing a screen or an
@@ -60,8 +60,8 @@ which subsystem is talking before you read anything.
     clicking the app tile or the room brings that exact window forward. No
     buttons, no source line: the tile and the name are the controls, and
     hovering them underlines the name and slides a return arrow in on its left.
-  - **Clipboard** — a feature page, always there, never the one the panel
-    opens on: a copy is not something happening. The latest copy in a card a
+  - **Clipboard** — a feature page, always there, and the one the panel opens
+    on when nothing above it is happening. The latest copy in a card a
     third of the slot wide, the three before it as rows in the rest, each with
     its age; a check marks whichever one a paste would give you now. Pressing
     one pastes it into the app you were typing in and closes the panel; ⌥

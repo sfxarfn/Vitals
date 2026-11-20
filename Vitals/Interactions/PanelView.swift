@@ -9,8 +9,8 @@ import UniformTypeIdentifiers
 /// numbers are not pages, they are `PanelDetail`s. The arrows only go live,
 /// and the dots only appear, while there is a second case. Meeting is always a
 /// page; with no call it says so, and a live one is what makes it the opener.
-/// Clipboard is always a page too, and never the opener: a copy is not
-/// something happening.
+/// Clipboard is always a page too, and the floor the panel opens on when
+/// nothing else is happening.
 enum PanelPage: CaseIterable { case nowPlaying, shelf, meeting, clipboard }
 
 /// The numbers behind a stat, opened from the stat itself — the die's flank or
@@ -182,13 +182,17 @@ extension NotchView {
 
     /// The page a panel opens on, by context. A file in hand is headed for the
     /// shelf, and a shelf already holding something is why you came back —
-    /// both open on Shelf. Failing that a live meeting, then Now Playing, the
-    /// floor. Decided fresh on every open; the last page is not remembered.
+    /// both open on Shelf. Failing that a live meeting, then music that is
+    /// actually playing — a paused track is not something happening — and
+    /// Clipboard, the floor. Decided fresh on every open; the last page is
+    /// not remembered.
     var openingPage: PanelPage {
         let dragging = fileDrag != nil || NotchController.shared?.draggingFile == true
         if dragging || !shelf.urls.isEmpty { return .shelf }
         // A live call outranks the music, never a file you are holding.
-        return meetings.meeting != nil ? .meeting : .nowPlaying
+        if meetings.meeting != nil { return .meeting }
+        if nowPlaying.track?.playing == true { return .nowPlaying }
+        return .clipboard
     }
 
     /// The slot as a fresh open finds it: the opening page, no detail.
